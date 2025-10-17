@@ -951,7 +951,7 @@ class FilesystemMiddleware(AgentMiddleware):
         long_term_memory: bool = False,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
-        tool_token_limit_before_evict: int | None = 50000,
+        tool_token_limit_before_evict: int | None = 20000,
     ) -> None:
         """Initialize the filesystem middleware.
 

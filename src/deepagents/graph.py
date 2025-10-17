@@ -31,7 +31,7 @@ def get_default_model() -> ChatAnthropic:
     """
     return ChatAnthropic(
         model_name="claude-sonnet-4-5-20250929",
-        max_tokens=64000,
+        max_tokens=20000,
     )
 
 
@@ -108,8 +108,8 @@ def create_deep_agent(
                 ),
                 SummarizationMiddleware(
                     model=model,
-                    max_tokens_before_summary=120000,
-                    messages_to_keep=20,
+                    max_tokens_before_summary=170000,
+                    messages_to_keep=6,
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
             ],
@@ -118,8 +118,8 @@ def create_deep_agent(
         ),
         SummarizationMiddleware(
             model=model,
-            max_tokens_before_summary=120000,
-            messages_to_keep=20,
+            max_tokens_before_summary=170000,
+            messages_to_keep=6,
         ),
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
     ]
@@ -140,4 +140,4 @@ def create_deep_agent(
         debug=debug,
         name=name,
         cache=cache,
-    )
+    ).with_config({"recursion_limit": 1000})

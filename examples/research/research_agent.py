@@ -163,4 +163,4 @@ agent = create_deep_agent(
     tools=[internet_search],
     system_prompt=research_instructions,
     subagents=[critique_sub_agent, research_sub_agent],
-).with_config({"recursion_limit": 1000})
+)
