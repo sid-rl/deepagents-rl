@@ -9,7 +9,6 @@ from pathlib import Path
 from tavily import TavilyClient
 from deepagents import create_deep_agent, SubAgent
 from utils import validate_command_safety
-from subagents import code_reviewer_agent, test_generator_agent
 from langgraph.types import Command
 from coding_instructions import get_coding_instructions
 
@@ -195,8 +194,7 @@ coding_instructions = get_coding_instructions()
 config = {"recursion_limit": 1000}
 
 agent = create_deep_agent(
-    [execute_bash, http_request, web_search],
-    coding_instructions,
-    subagents=[code_reviewer_agent, test_generator_agent],
-    local_filesystem=True,
+    tools=[execute_bash, http_request, web_search],
+    system_prompt=coding_instructions,
+    use_local_filesystem=True,
 ).with_config(config)

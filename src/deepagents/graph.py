@@ -1,140 +1,152 @@
-from deepagents.sub_agent import _create_task_tool, SubAgent
-from deepagents.model import get_default_model
-from deepagents.tools import (
-    write_todos,
-    write_file,
-    read_file,
-    ls,
-    edit_file,
-    glob,
-    grep,
-)
-from deepagents.local_fs_tools import (
-    write_file as local_write_file,
-    read_file as local_read_file,
-    ls as local_ls,
-    edit_file as local_edit_file,
-    glob as local_glob,
-    grep as local_grep,
-)
-from deepagents.state import DeepAgentState
-from typing import Sequence, Union, Callable, Any, TypeVar, Type, Optional, Dict
-from langchain_core.tools import BaseTool, tool
-from langchain_core.language_models import LanguageModelLike
-from deepagents.interrupt import create_interrupt_hook, ToolInterruptConfig
+"""Deepagents come with planning, filesystem, and subagents."""
+
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig, TodoListMiddleware
+from langchain.agents.middleware.summarization import SummarizationMiddleware
+from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.structured_output import ResponseFormat
+from langchain_anthropic import ChatAnthropic
+from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import BaseTool
+from langgraph.cache.base import BaseCache
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
-from langgraph.prebuilt import create_react_agent
 
-StateSchema = TypeVar("StateSchema", bound=DeepAgentState)
-StateSchemaType = Type[StateSchema]
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.local_filesystem import LocalFilesystemMiddleware
+from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
 
-base_prompt = """You have access to a number of standard tools
+BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
-## `write_todos`
 
-You have access to the `write_todos` tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
-These tools are also EXTREMELY helpful for planning tasks, and for breaking down larger complex tasks into smaller steps. If you do not use this tool when planning, you may forget to do important tasks - and that is unacceptable.
+def get_default_model() -> ChatAnthropic:
+    """Get the default model for deep agents.
 
-It is critical that you mark todos as completed as soon as you are done with a task. Do not batch up multiple tasks before marking them as completed.
-## `task`
-
-- When doing web search, prefer to use the `task` tool in order to reduce context usage.
-
-"""
+    Returns:
+        ChatAnthropic instance configured with Claude Sonnet 4.
+    """
+    return ChatAnthropic(
+        model_name="claude-sonnet-4-5-20250929",
+        max_tokens=20000,
+    )
 
 
 def create_deep_agent(
-    tools: Sequence[Union[BaseTool, Callable, dict[str, Any]]],
-    instructions: str,
-    model: Optional[Union[str, LanguageModelLike]] = None,
-    subagents: list[SubAgent] = None,
-    state_schema: Optional[StateSchemaType] = None,
-    local_filesystem: bool = False,
-    builtin_tools: Optional[list[str]] = None,
-    interrupt_config: Optional[ToolInterruptConfig] = None,
-    config_schema: Optional[Type[Any]] = None,
-    checkpointer: Optional[Checkpointer] = None,
-    post_model_hook: Optional[Callable] = None,
-):
+    model: str | BaseChatModel | None = None,
+    tools: Sequence[BaseTool | Callable | dict[str, Any]] | None = None,
+    *,
+    system_prompt: str | None = None,
+    middleware: Sequence[AgentMiddleware] = (),
+    subagents: list[SubAgent | CompiledSubAgent] | None = None,
+    response_format: ResponseFormat | None = None,
+    context_schema: type[Any] | None = None,
+    checkpointer: Checkpointer | None = None,
+    store: BaseStore | None = None,
+    use_longterm_memory: bool = False,
+    use_local_filesystem: bool = False,
+    interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
+    debug: bool = False,
+    name: str | None = None,
+    cache: BaseCache | None = None,
+) -> CompiledStateGraph:
     """Create a deep agent.
 
     This agent will by default have access to a tool to write todos (write_todos),
-    and then six file system tools: write_file, ls, read_file, edit_file, glob, grep.
+    four file editing tools: write_file, ls, read_file, edit_file, and a tool to call
+    subagents.
 
     Args:
-        tools: The additional tools the agent should have access to.
-        instructions: The additional instructions the agent should have. Will go in
+        tools: The tools the agent should have access to.
+        system_prompt: The additional instructions the agent should have. Will go in
             the system prompt.
+        middleware: Additional middleware to apply after standard middleware.
         model: The model to use.
         subagents: The subagents to use. Each subagent should be a dictionary with the
             following keys:
                 - `name`
-                - `description` (used by the main agent to decide whether to call the sub agent)
+                - `description` (used by the main agent to decide whether to call the
+                  sub agent)
                 - `prompt` (used as the system prompt in the subagent)
                 - (optional) `tools`
-                - (optional) `model` (either a LanguageModelLike instance or dict settings)
-        state_schema: The schema of the deep agent. Should subclass from DeepAgentState
-        local_filesystem: If True, use real filesystem tools instead of mock state-based tools
-        builtin_tools: If not provided, all built-in tools are included. If provided, 
-            only the specified built-in tools are included.
-        interrupt_config: Optional Dict[str, HumanInterruptConfig] mapping tool names to interrupt configs.
-        config_schema: The schema of the deep agent.
+                - (optional) `model` (either a LanguageModelLike instance or dict
+                  settings)
+                - (optional) `middleware` (list of AgentMiddleware)
+        response_format: A structured output response format to use for the agent.
+        context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        post_model_hook: Optional post model hook function for intercepting tool calls.
-    """
-    
-    prompt = instructions + base_prompt
-    if local_filesystem:
-        all_builtin_tools = [
-            write_todos,
-            local_write_file,
-            local_read_file,
-            local_ls,
-            local_edit_file,
-            local_glob,
-            local_grep,
-        ]
-    else:
-        all_builtin_tools = [write_todos, write_file, read_file, ls, edit_file, glob, grep]
+        store: Optional store for persisting longterm memories.
+        use_longterm_memory: Whether to use longterm memory - you must provide a store
+            in order to use longterm memory.
+        use_local_filesystem: If True, injects LocalFilesystemMiddleware (tools operate on disk).
+            When True, longterm memory is not supported and `use_longterm_memory` must be False.
+        interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
+            interrupt configs.
+        debug: Whether to enable debug mode. Passed through to create_agent.
+        name: The name of the agent. Passed through to create_agent.
+        cache: The cache to use for the agent. Passed through to create_agent.
 
-    if builtin_tools is not None:
-        tools_by_name = {}
-        for tool_ in all_builtin_tools:
-            if not isinstance(tool_, BaseTool):
-                tool_ = tool(tool_)
-            tools_by_name[tool_.name] = tool_
-        # Only include built-in tools whose names are in the specified list
-        built_in_tools = [ tools_by_name[_tool] for _tool in builtin_tools        ]
-    else:
-        built_in_tools = all_builtin_tools
-    
+    Returns:
+        A configured deep agent.
+    """
     if model is None:
         model = get_default_model()
-    state_schema = state_schema or DeepAgentState
-    task_tool = _create_task_tool(
-        list(tools) + built_in_tools, instructions, subagents or [], model, state_schema
-    )
-    all_tools = built_in_tools + list(tools) + [task_tool]
 
-    # Should never be the case that both are specified
-    if post_model_hook and interrupt_config:
-        raise ValueError(
-            "Cannot specify both post_model_hook and interrupt_config together. "
-            "Use either interrupt_config for tool interrupts or post_model_hook for custom post-processing."
-        )
-    elif post_model_hook is not None:
-        selected_post_model_hook = post_model_hook
-    elif interrupt_config is not None:
-        selected_post_model_hook = create_interrupt_hook(interrupt_config)
-    else:
-        selected_post_model_hook = None
+    if use_local_filesystem and use_longterm_memory:
+        raise ValueError("Longterm memory is not supported when using the local filesystem. Set use_longterm_memory=False or disable use_local_filesystem.")
 
-    return create_react_agent(
+    # Choose filesystem middleware kind
+    def _fs_middleware():
+        if use_local_filesystem:
+            return LocalFilesystemMiddleware()
+        return FilesystemMiddleware(long_term_memory=use_longterm_memory)
+
+    deepagent_middleware = [
+        TodoListMiddleware(),
+        _fs_middleware(),
+        SubAgentMiddleware(
+            default_model=model,
+            default_tools=tools,
+            subagents=subagents if subagents is not None else [],
+            default_middleware=[
+                TodoListMiddleware(),
+                _fs_middleware(),
+                SummarizationMiddleware(
+                    model=model,
+                    max_tokens_before_summary=170000,
+                    messages_to_keep=6,
+                ),
+                AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+            ],
+            default_interrupt_on=interrupt_on,
+            general_purpose_agent=True,
+        ),
+        SummarizationMiddleware(
+            model=model,
+            max_tokens_before_summary=170000,
+            messages_to_keep=6,
+        ),
+        AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+    ]
+    if interrupt_on is not None:
+        deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+    if middleware is not None:
+        deepagent_middleware.extend(middleware)
+
+    return create_agent(
         model,
-        prompt=prompt,
-        tools=all_tools,
-        state_schema=state_schema,
-        post_model_hook=selected_post_model_hook,
-        config_schema=config_schema,
+        system_prompt=system_prompt + "\n\n" + BASE_AGENT_PROMPT if system_prompt else BASE_AGENT_PROMPT,
+        tools=tools,
+        middleware=deepagent_middleware,
+        response_format=response_format,
+        context_schema=context_schema,
         checkpointer=checkpointer,
-    )
+        store=store,
+        debug=debug,
+        name=name,
+        cache=cache,
+    ).with_config({"recursion_limit": 1000})

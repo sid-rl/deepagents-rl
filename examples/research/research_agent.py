@@ -3,11 +3,11 @@ from typing import Literal
 
 from tavily import TavilyClient
 
+from deepagents import create_deep_agent
 
-from deepagents import create_deep_agent, SubAgent
- 
 # It's best practice to initialize the client once and reuse it.
 tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+
 
 # Search tool to use to do research
 def internet_search(
@@ -35,8 +35,8 @@ only your FINAL answer will be passed on to the user. They will have NO knowledg
 research_sub_agent = {
     "name": "research-agent",
     "description": "Used to research more in depth questions. Only give this researcher one topic at a time. Do not pass multiple sub questions to this researcher. Instead, you should break down a large topic into the necessary components, and then call multiple research agents in parallel, one for each sub question.",
-    "prompt": sub_research_prompt,
-    "tools": ["internet_search"],
+    "system_prompt": sub_research_prompt,
+    "tools": [internet_search],
 }
 
 sub_critique_prompt = """You are a dedicated editor. You are being tasked to critique a report.
@@ -64,7 +64,7 @@ Things to check:
 critique_sub_agent = {
     "name": "critique-agent",
     "description": "Used to critique the final report. Give this agent some information about how you want it to critique the report.",
-    "prompt": sub_critique_prompt,
+    "system_prompt": sub_critique_prompt,
 }
 
 
@@ -160,7 +160,7 @@ Use this to run an internet search for a given query. You can specify the number
 
 # Create the agent
 agent = create_deep_agent(
-    [internet_search],
-    research_instructions,
+    tools=[internet_search],
+    system_prompt=research_instructions,
     subagents=[critique_sub_agent, research_sub_agent],
-).with_config({"recursion_limit": 1000})
+)
