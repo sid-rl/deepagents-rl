@@ -1,0 +1,553 @@
+"""Middleware that exposes local filesystem tools to an agent.
+
+This mirrors the structure of `FilesystemMiddleware` but operates on the
+host/local filesystem (disk) rather than the in-memory/mock filesystem.
+It ports the tool behavior from `src/deepagents/local_fs_tools.py` into
+middleware-provided tools so they can be injected via AgentMiddleware.
+"""
+# ruff: noqa: E501
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Any, Optional, Union
+
+import os
+import pathlib
+import re
+import subprocess
+
+from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.tools.tool_node import ToolCallRequest
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
+from langchain_core.tools import tool
+from deepagents.middleware.filesystem import (
+    _create_file_data,
+    _format_content_with_line_numbers,
+    FilesystemState,
+    FILESYSTEM_SYSTEM_PROMPT,
+)
+from deepagents.middleware.common import TOO_LARGE_TOOL_MSG, FILESYSTEM_SYSTEM_PROMPT_GLOB_GREP_SUPPLEMENT
+
+from deepagents.prompts import (
+    EDIT_DESCRIPTION,
+    TOOL_DESCRIPTION,
+    GLOB_DESCRIPTION,
+    GREP_DESCRIPTION,
+    WRITE_DESCRIPTION,
+)
+
+LOCAL_LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the specified directory on disk.
+
+Usage:
+- The ls tool will return a list of all files in the specified directory.
+- The path parameter accepts both absolute paths (starting with /) and relative paths
+- Relative paths are resolved relative to the current working directory
+- This is very useful for exploring the file system and finding the right file to read or edit.
+- You should almost ALWAYS use this tool before using the Read or Edit tools."""
+
+LOCAL_READ_FILE_TOOL_DESCRIPTION = TOOL_DESCRIPTION + "\n- You should ALWAYS make sure a file has been read before editing it."
+LOCAL_EDIT_FILE_TOOL_DESCRIPTION = EDIT_DESCRIPTION
+
+
+# -----------------------------
+# Path Resolution Helper
+# -----------------------------
+
+def _resolve_path(path: str, cwd: str) -> str:
+    """Resolve relative paths against CWD, leave absolute paths unchanged."""
+    if os.path.isabs(path):
+        return path
+    return str(pathlib.Path(cwd) / path)
+
+
+# -----------------------------
+# Tool Implementations (Local)
+# -----------------------------
+
+def _ls_impl(path: str = ".", cwd: str | None = None) -> list[str]:
+    """List all files in the specified directory on disk."""
+    try:
+        if cwd:
+            path = _resolve_path(path, cwd)
+        path_obj = pathlib.Path(path)
+        if not path_obj.exists():
+            return [f"Error: Path '{path}' does not exist"]
+        if not path_obj.is_dir():
+            return [f"Error: Path '{path}' is not a directory"]
+
+        items: list[str] = []
+        for item in path_obj.iterdir():
+            items.append(str(item.name))
+        return sorted(items)
+    except Exception as e:  # pragma: no cover - defensive
+        return [f"Error listing directory: {str(e)}"]
+
+
+def _read_file_impl(
+    file_path: str,
+    offset: int = 0,
+    limit: int = 2000,
+    cwd: str | None = None,
+) -> str:
+    """Read a file from the local filesystem and return cat -n formatted content."""
+    try:
+        if cwd:
+            file_path = _resolve_path(file_path, cwd)
+        path_obj = pathlib.Path(file_path)
+
+        if not path_obj.exists():
+            return f"Error: File '{file_path}' not found"
+        if not path_obj.is_file():
+            return f"Error: '{file_path}' is not a file"
+
+        try:
+            with open(path_obj, "r", encoding="utf-8") as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            # Fallback to binary read and lenient decode
+            with open(path_obj, "rb") as f:
+                content = f.read().decode("utf-8", errors="ignore")
+
+        if not content or content.strip() == "":
+            return "System reminder: File exists but has empty contents"
+
+        lines = content.splitlines()
+        start_idx = offset
+        end_idx = min(start_idx + limit, len(lines))
+
+        if start_idx >= len(lines):
+            return f"Error: Line offset {offset} exceeds file length ({len(lines)} lines)"
+
+        result_lines = []
+        for i in range(start_idx, end_idx):
+            line_content = lines[i]
+            if len(line_content) > 2000:
+                line_content = line_content[:2000]
+            result_lines.append(f"{i + 1:6d}\t{line_content}")
+
+        return "\n".join(result_lines)
+
+    except Exception as e:  # pragma: no cover - defensive
+        return f"Error reading file: {str(e)}"
+
+
+def _write_file_impl(
+    file_path: str,
+    content: str,
+    cwd: str | None = None,
+) -> str:
+    """Write content to a file on the local filesystem (creates parents)."""
+    try:
+        if cwd:
+            file_path = _resolve_path(file_path, cwd)
+        path_obj = pathlib.Path(file_path)
+        path_obj.parent.mkdir(parents=True, exist_ok=True)
+        with open(path_obj, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"Successfully wrote to file '{file_path}'"
+    except Exception as e:  # pragma: no cover - defensive
+        return f"Error writing file: {str(e)}"
+
+
+def _edit_file_impl(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
+    cwd: str | None = None,
+) -> str:
+    """Edit a file on disk by replacing old_string with new_string."""
+    try:
+        if cwd:
+            file_path = _resolve_path(file_path, cwd)
+        path_obj = pathlib.Path(file_path)
+        if not path_obj.exists():
+            return f"Error: File '{file_path}' not found"
+        if not path_obj.is_file():
+            return f"Error: '{file_path}' is not a file"
+
+        try:
+            with open(path_obj, "r", encoding="utf-8") as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            return f"Error: File '{file_path}' contains non-UTF-8 content"
+
+        if old_string not in content:
+            return f"Error: String not found in file: '{old_string}'"
+
+        if not replace_all:
+            occurrences = content.count(old_string)
+            if occurrences > 1:
+                return (
+                    f"Error: String '{old_string}' appears {occurrences} times in file. "
+                    "Use replace_all=True to replace all instances, or provide a more specific string with surrounding context."
+                )
+            elif occurrences == 0:
+                return f"Error: String not found in file: '{old_string}'"
+
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+
+        with open(path_obj, "w", encoding="utf-8") as f:
+            f.write(new_content)
+
+        if replace_all:
+            replacement_count = content.count(old_string)
+            return f"Successfully replaced {replacement_count} instance(s) of the string in '{file_path}'"
+        return f"Successfully replaced string in '{file_path}'"
+
+    except Exception as e:  # pragma: no cover - defensive
+        return f"Error editing file: {str(e)}"
+
+
+def _glob_impl(
+    pattern: str,
+    path: str = ".",
+    max_results: int = 100,
+    include_dirs: bool = False,
+    recursive: bool = True,
+    cwd: str | None = None,
+) -> str:
+    """Find files and directories using glob patterns on local filesystem."""
+    try:
+        if cwd:
+            path = _resolve_path(path, cwd)
+        path_obj = pathlib.Path(path)
+        if not path_obj.exists():
+            return f"Error: Path '{path}' does not exist"
+        if not path_obj.is_dir():
+            return f"Error: Path '{path}' is not a directory"
+
+        results: list[str] = []
+        try:
+            matches = path_obj.rglob(pattern) if recursive else path_obj.glob(pattern)
+            for match in matches:
+                if len(results) >= max_results:
+                    break
+                if match.is_file():
+                    results.append(str(match))
+                elif match.is_dir() and include_dirs:
+                    results.append(f"{match}/")
+            results.sort()
+        except Exception as e:
+            return f"Error processing glob pattern: {str(e)}"
+
+        if not results:
+            search_type = "recursive" if recursive else "non-recursive"
+            dirs_note = " (including directories)" if include_dirs else ""
+            return f"No matches found for pattern '{pattern}' in '{path}' ({search_type} search{dirs_note})"
+
+        header = f"Found {len(results)} matches for pattern '{pattern}'"
+        if len(results) >= max_results:
+            header += f" (limited to {max_results} results)"
+        header += ":\n\n"
+        return header + "\n".join(results)
+
+    except Exception as e:  # pragma: no cover - defensive
+        return f"Error in glob search: {str(e)}"
+
+
+def _grep_impl(
+    pattern: str,
+    files: Optional[Union[str, list[str]]] = None,
+    path: Optional[str] = None,
+    file_pattern: str = "*",
+    max_results: int = 50,
+    case_sensitive: bool = False,
+    context_lines: int = 0,
+    regex: bool = False,
+    cwd: str | None = None,
+) -> str:
+    """Search for text patterns within files using ripgrep on local filesystem."""
+    try:
+        if not files and not path:
+            return "Error: Must provide either 'files' parameter or 'path' parameter"
+        
+        if cwd:
+            if files:
+                if isinstance(files, str):
+                    files = _resolve_path(files, cwd)
+                else:
+                    files = [_resolve_path(f, cwd) for f in files]
+            if path:
+                path = _resolve_path(path, cwd)
+
+        cmd: list[str] = ["rg"]
+        if regex:
+            cmd.extend(["-e", pattern])
+        else:
+            cmd.extend(["-F", pattern])
+
+        if not case_sensitive:
+            cmd.append("-i")
+
+        if context_lines > 0:
+            cmd.extend(["-C", str(context_lines)])
+
+        if max_results > 0:
+            cmd.extend(["-m", str(max_results)])
+
+        if file_pattern != "*":
+            cmd.extend(["-g", file_pattern])
+
+        if files:
+            if isinstance(files, str):
+                cmd.append(files)
+            else:
+                cmd.extend(files)
+        elif path:
+            cmd.append(path)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=path if path and os.path.isdir(path) else None,
+            )
+            if result.returncode == 0:
+                return result.stdout
+            elif result.returncode == 1:
+                pattern_desc = f"regex pattern '{pattern}'" if regex else f"text '{pattern}'"
+                case_desc = " (case-sensitive)" if case_sensitive else " (case-insensitive)"
+                return f"No matches found for {pattern_desc}{case_desc}"
+            else:
+                return f"Error running ripgrep: {result.stderr}"
+        except subprocess.TimeoutExpired:
+            return "Error: ripgrep search timed out"
+        except FileNotFoundError:
+            return "Error: ripgrep (rg) not found. Please install ripgrep to use this tool."
+        except Exception as e:
+            return f"Error running ripgrep: {str(e)}"
+
+    except Exception as e:  # pragma: no cover - defensive
+        return f"Error in grep search: {str(e)}"
+
+
+# --------------------------------
+# Middleware: LocalFilesystemMiddleware
+# --------------------------------
+
+LOCAL_FILESYSTEM_SYSTEM_PROMPT = FILESYSTEM_SYSTEM_PROMPT + "\n" + FILESYSTEM_SYSTEM_PROMPT_GLOB_GREP_SUPPLEMENT
+
+
+def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, cwd: str | None = None):
+    """Return tool instances for local filesystem operations."""
+    # We already decorated read/write/edit/glob/grep with @tool including descriptions
+    # Only `ls` needs a manual wrapper to attach a description.
+    ls_description = (
+        custom_tool_descriptions.get("ls") if custom_tool_descriptions else LOCAL_LIST_FILES_TOOL_DESCRIPTION
+    )
+
+    @tool(description=ls_description)
+    def ls(path: str = ".") -> list[str]:  # noqa: D401 - simple wrapper
+        """List all files in the specified directory."""
+        return _ls_impl(path, cwd=cwd)
+
+    read_desc = (
+        (custom_tool_descriptions or {}).get("read_file", LOCAL_READ_FILE_TOOL_DESCRIPTION)
+    )
+
+    @tool(description=read_desc)
+    def read_file(file_path: str, offset: int = 0, limit: int = 2000) -> str:
+        return _read_file_impl(file_path, offset, limit, cwd=cwd)
+
+    write_desc = (
+        (custom_tool_descriptions or {}).get("write_file", WRITE_DESCRIPTION)
+    )
+
+    @tool(description=write_desc)
+    def write_file(file_path: str, content: str) -> str:
+        return _write_file_impl(file_path, content, cwd=cwd)
+
+    edit_desc = (
+        (custom_tool_descriptions or {}).get("edit_file", LOCAL_EDIT_FILE_TOOL_DESCRIPTION)
+    )
+
+    @tool(description=edit_desc)
+    def edit_file(
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        return _edit_file_impl(file_path, old_string, new_string, replace_all, cwd=cwd)
+
+    glob_desc = (
+        (custom_tool_descriptions or {}).get("glob", GLOB_DESCRIPTION)
+    )
+
+    @tool(description=glob_desc)
+    def glob(
+        pattern: str,
+        path: str = ".",
+        max_results: int = 100,
+        include_dirs: bool = False,
+        recursive: bool = True,
+    ) -> str:
+        return _glob_impl(pattern, path, max_results, include_dirs, recursive, cwd=cwd)
+
+    grep_desc = (
+        (custom_tool_descriptions or {}).get("grep", GREP_DESCRIPTION)
+    )
+
+    @tool(description=grep_desc)
+    def grep(
+        pattern: str,
+        files: Optional[Union[str, list[str]]] = None,
+        path: Optional[str] = None,
+        file_pattern: str = "*",
+        max_results: int = 50,
+        case_sensitive: bool = False,
+        context_lines: int = 0,
+        regex: bool = False,
+    ) -> str:
+        return _grep_impl(
+            pattern,
+            files=files,
+            path=path,
+            file_pattern=file_pattern,
+            max_results=max_results,
+            case_sensitive=case_sensitive,
+            context_lines=context_lines,
+            regex=regex,
+            cwd=cwd,
+        )
+
+    return [ls, read_file, write_file, edit_file, glob, grep]
+
+
+class LocalFilesystemMiddleware(AgentMiddleware):
+    """Middleware that injects local filesystem tools into an agent.
+
+    Tools added:
+    - ls
+    - read_file
+    - write_file
+    - edit_file
+    - glob
+    - grep
+    """
+
+    state_schema = FilesystemState
+
+    def __init__(
+        self,
+        *,
+        system_prompt: str | None = None,
+        custom_tool_descriptions: dict[str, str] | None = None,
+        tool_token_limit_before_evict: int | None = 20000,
+        cwd: str | None = None,
+    ) -> None:
+        self.cwd = cwd or os.getcwd()
+        cwd_prompt = f"\n\nCurrent working directory: {self.cwd}\n\nWhen using filesystem tools (ls, read_file, write_file, edit_file, glob, grep), relative paths will be resolved relative to this directory."
+        self.system_prompt = (system_prompt or LOCAL_FILESYSTEM_SYSTEM_PROMPT) + cwd_prompt
+        self.tools = _get_local_filesystem_tools(custom_tool_descriptions, cwd=self.cwd)
+        self.tool_token_limit_before_evict = tool_token_limit_before_evict
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        if self.system_prompt is not None:
+            request.system_prompt = (
+                request.system_prompt + "\n\n" + self.system_prompt
+                if request.system_prompt
+                else self.system_prompt
+            )
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        if self.system_prompt is not None:
+            request.system_prompt = (
+                request.system_prompt + "\n\n" + self.system_prompt
+                if request.system_prompt
+                else self.system_prompt
+            )
+        return await handler(request)
+
+    # --------- Token-eviction to filesystem state (like FilesystemMiddleware) ---------
+    def _intercept_large_tool_result(self, tool_result: ToolMessage | Command) -> ToolMessage | Command:
+        if isinstance(tool_result, ToolMessage) and isinstance(tool_result.content, str):
+            content = tool_result.content
+            if self.tool_token_limit_before_evict and len(content) > 4 * self.tool_token_limit_before_evict:
+                file_path = f"/large_tool_results/{tool_result.tool_call_id}"
+                file_data = _create_file_data(content)
+                state_update = {
+                    "messages": [
+                        ToolMessage(
+                            TOO_LARGE_TOOL_MSG.format(
+                                tool_call_id=tool_result.tool_call_id,
+                                file_path=file_path,
+                                content_sample=_format_content_with_line_numbers(
+                                    file_data["content"][:10], format_style="tab", start_line=1
+                                ),
+                            ),
+                            tool_call_id=tool_result.tool_call_id,
+                        )
+                    ],
+                    "files": {file_path: file_data},
+                }
+                return Command(update=state_update)
+        elif isinstance(tool_result, Command):
+            update = tool_result.update
+            if update is None:
+                return tool_result
+            message_updates = update.get("messages", [])
+            file_updates = update.get("files", {})
+
+            edited_message_updates = []
+            for message in message_updates:
+                if self.tool_token_limit_before_evict and isinstance(message, ToolMessage) and isinstance(message.content, str):
+                    content = message.content
+                    if len(content) > 4 * self.tool_token_limit_before_evict:
+                        file_path = f"/large_tool_results/{message.tool_call_id}"
+                        file_data = _create_file_data(content)
+                        edited_message_updates.append(
+                            ToolMessage(
+                                TOO_LARGE_TOOL_MSG.format(
+                                    tool_call_id=message.tool_call_id,
+                                    file_path=file_path,
+                                    content_sample=_format_content_with_line_numbers(
+                                        file_data["content"][:10], format_style="tab", start_line=1
+                                    ),
+                                ),
+                                tool_call_id=message.tool_call_id,
+                            )
+                        )
+                        file_updates[file_path] = file_data
+                        continue
+                edited_message_updates.append(message)
+            return Command(update={**update, "messages": edited_message_updates, "files": file_updates})
+        return tool_result
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command],
+    ) -> ToolMessage | Command:
+        # Skip eviction for local filesystem tools
+        if self.tool_token_limit_before_evict is None or request.tool_call["name"] in {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}:
+            return handler(request)
+        tool_result = handler(request)
+        return self._intercept_large_tool_result(tool_result)
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        if self.tool_token_limit_before_evict is None or request.tool_call["name"] in {"ls", "read_file", "write_file", "edit_file", "glob", "grep"}:
+            return await handler(request)
+        tool_result = await handler(request)
+        return self._intercept_large_tool_result(tool_result)

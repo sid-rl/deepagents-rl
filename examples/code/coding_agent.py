@@ -1,21 +1,18 @@
 import os
 import subprocess
-import tempfile
 import platform
 import requests
-from typing import List, Dict, Any, Optional, Union, Literal
+import json
+from typing import List, Dict, Any, Union, Literal, Annotated
 from pathlib import Path
 
 from tavily import TavilyClient
-from deepagents import create_deep_agent, SubAgent
-from utils import validate_command_safety
+from deepagents import create_deep_agent
 from langgraph.types import Command
 from coding_instructions import get_coding_instructions
+from langchain_core.tools import tool
+from langchain_core.messages import ToolMessage
 
-# LangSmith tracing imports
-from langsmith import Client
-from langsmith.wrappers import wrap_openai
-from langchain_core.tracers.langchain import LangChainTracer
 import dotenv
 
 dotenv.load_dotenv()
@@ -24,7 +21,7 @@ tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
 def execute_bash(command: str, timeout: int = 30, cwd: str = None) -> Dict[str, Any]:
     """
-    Execute bash/shell commands safely with prompt injection detection and human approval.
+    Execute bash/shell commands safely.
 
     Args:
         command: Shell command to execute
@@ -35,25 +32,11 @@ def execute_bash(command: str, timeout: int = 30, cwd: str = None) -> Dict[str, 
         Dictionary with execution results including stdout, stderr, and success status
     """
     try:
-        # First, validate command safety (focusing on prompt injection)
-        safety_validation = validate_command_safety(command)
-        
-        # If command is not safe, return error without executing
-        if not safety_validation.is_safe:
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": f"Command blocked - safety validation failed:\nThreat Type: {safety_validation.threat_type}\nReasoning: {safety_validation.reasoning}\nDetected Patterns: {', '.join(safety_validation.detected_patterns)}",
-                "return_code": -1,
-                "safety_validation": safety_validation.model_dump()
-            }
-        
         if platform.system() == "Windows":
             shell_cmd = ["cmd", "/c", command]
         else:
             shell_cmd = ["bash", "-c", command]
 
-        # Execute the command
         result = subprocess.run(
             shell_cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
         )
@@ -63,7 +46,6 @@ def execute_bash(command: str, timeout: int = 30, cwd: str = None) -> Dict[str, 
             "stdout": result.stdout,
             "stderr": result.stderr,
             "return_code": result.returncode,
-            "safety_validation": safety_validation.model_dump()
         }
 
     except subprocess.TimeoutExpired:
@@ -105,7 +87,6 @@ def http_request(
         Dictionary with response data including status, headers, and content
     """
     try:
-        # Prepare request parameters
         kwargs = {"url": url, "method": method.upper(), "timeout": timeout}
 
         if headers:
@@ -118,10 +99,8 @@ def http_request(
             else:
                 kwargs["data"] = data
 
-        # Make the request
         response = requests.request(**kwargs)
 
-        # Try to parse JSON response, fallback to text
         try:
             content = response.json()
         except:
@@ -187,10 +166,9 @@ def web_search(
             "query": query
         }
 
-# Get coding instructions from separate file
+
 coding_instructions = get_coding_instructions()
 
-# Create the coding agent with interrupt handling and LangSmith tracing
 config = {"recursion_limit": 1000}
 
 agent = create_deep_agent(
