@@ -446,6 +446,27 @@ class LocalFilesystemMiddleware(AgentMiddleware):
 
     state_schema = FilesystemState
 
+    def _check_ripgrep_installed(self) -> None:
+        """Check if ripgrep (rg) is installed on the system.
+        
+        Raises:
+            RuntimeError: If ripgrep is not found on the system.
+        """
+        try:
+            subprocess.run(
+                ["rg", "--version"],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "ripgrep (rg) is not installed. The grep tool requires ripgrep to function. "
+                "Please install it from https://github.com/BurntSushi/ripgrep#installation"
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error checking for ripgrep installation: {str(e)}")
+
     def __init__(
         self,
         *,
@@ -455,6 +476,9 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         cwd: str | None = None,
     ) -> None:
         self.cwd = cwd or os.getcwd()
+        
+        # Check if ripgrep is installed
+        self._check_ripgrep_installed()
         
         # Discover skills from standard locations
         self.skills = self._discover_skills()
