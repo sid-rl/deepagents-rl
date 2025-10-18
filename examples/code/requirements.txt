@@ -3,4 +3,5 @@ deepagents
 langgraph-cli[inmem]
 tavily-python
 langchain-anthropic
+langchain
 pydantic

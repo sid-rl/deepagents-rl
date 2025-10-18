@@ -24,9 +24,10 @@ For simple 1-2 step tasks, just do them without todos.
 
 ## Tools
 
-### execute_bash
-Execute shell commands. Always quote paths with spaces.
-Examples: `pytest /foo/bar/tests` (good), `cd /foo/bar && pytest tests` (bad)
+### shell
+Execute shell commands in a persistent session. Always quote paths with spaces.
+Chain multiple commands with `&&` or `;` instead of embedding newlines.
+Examples: `pytest /foo/bar/tests` (good)
 
 ### File Tools
 - read_file: Read file contents (use absolute paths)

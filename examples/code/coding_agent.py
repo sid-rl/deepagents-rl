@@ -1,6 +1,4 @@
 import os
-import subprocess
-import platform
 import requests
 import json
 from typing import List, Dict, Any, Union, Literal, Annotated
@@ -12,56 +10,13 @@ from langgraph.types import Command
 from coding_instructions import get_coding_instructions
 from langchain_core.tools import tool
 from langchain_core.messages import ToolMessage
+from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 
 import dotenv
 
 dotenv.load_dotenv()
 
 tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
-
-def execute_bash(command: str, timeout: int = 30, cwd: str = None) -> Dict[str, Any]:
-    """
-    Execute bash/shell commands safely.
-
-    Args:
-        command: Shell command to execute
-        timeout: Maximum execution time in seconds
-        cwd: Working directory for command execution
-
-    Returns:
-        Dictionary with execution results including stdout, stderr, and success status
-    """
-    try:
-        if platform.system() == "Windows":
-            shell_cmd = ["cmd", "/c", command]
-        else:
-            shell_cmd = ["bash", "-c", command]
-
-        result = subprocess.run(
-            shell_cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "return_code": result.returncode,
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "return_code": -1,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Error executing command: {str(e)}",
-            "return_code": -1,
-        }
 
 
 def http_request(
@@ -171,8 +126,22 @@ coding_instructions = get_coding_instructions()
 
 config = {"recursion_limit": 1000}
 
+shell_middleware = ShellToolMiddleware(
+    workspace_root=os.getcwd(),
+    execution_policy=HostExecutionPolicy()
+)
+
 agent = create_deep_agent(
-    tools=[execute_bash, http_request, web_search],
+    tools=[http_request, web_search],
     system_prompt=coding_instructions,
     use_local_filesystem=True,
+    middleware=[shell_middleware],
 ).with_config(config)
+
+from langgraph.checkpoint.memory import InMemorySaver
+
+agent.checkpointer = InMemorySaver()
+
+print(agent.channels)
+
+agent.invoke({"messages": [{"role": "user", "content": "fhi"}]}, config={"configurable": {"thread_id": "fo"}})
