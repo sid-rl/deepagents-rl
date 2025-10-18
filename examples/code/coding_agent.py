@@ -137,11 +137,3 @@ agent = create_deep_agent(
     use_local_filesystem=True,
     middleware=[shell_middleware],
 ).with_config(config)
-
-from langgraph.checkpoint.memory import InMemorySaver
-
-agent.checkpointer = InMemorySaver()
-
-print(agent.channels)
-
-agent.invoke({"messages": [{"role": "user", "content": "fhi"}]}, config={"configurable": {"thread_id": "fo"}})
