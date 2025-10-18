@@ -18,8 +18,8 @@ from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
 from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
@@ -113,7 +113,7 @@ def create_deep_agent(
                     messages_to_keep=6,
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-                PatchToolCallsMiddleware()
+                PatchToolCallsMiddleware(),
             ],
             default_interrupt_on=interrupt_on,
             general_purpose_agent=True,
