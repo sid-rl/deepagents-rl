@@ -10,10 +10,23 @@ from pathlib import Path
 from tavily import TavilyClient
 from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command, Interrupt
+
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.prompt import Prompt
+from rich import box
 
 import dotenv
 
 dotenv.load_dotenv()
+
+console = Console()
 
 tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY")) if os.environ.get("TAVILY_API_KEY") else None
 
@@ -184,106 +197,255 @@ Example: `task(description="Debug the login function throwing TypeError", subage
 
 config = {"recursion_limit": 1000}
 
+# Interrupt on destructive operations (write, edit, shell)
+interrupt_config = {
+    "write_file": True,
+    "edit_file": True,
+    "shell": True,
+}
+
 agent = create_deep_agent(
     tools=[http_request, web_search],
     system_prompt=get_coding_instructions(),
     use_local_filesystem=True,
+    interrupt_on=interrupt_config,
 ).with_config(config)
 
 agent.checkpointer = InMemorySaver()
 
+# Constants for display truncation
+MAX_ARG_LENGTH = 200
+MAX_RESULT_LENGTH = 200
 
-def extract_content_with_tools(message_content) -> str:
-    """Extract content from agent messages, including tool calls for transparency."""
+
+def truncate_value(value: str, max_length: int = MAX_ARG_LENGTH) -> str:
+    """Truncate a string value if it exceeds max_length."""
+    if len(value) > max_length:
+        return value[:max_length] + "..."
+    return value
+
+
+def format_tool_args(tool_input: dict) -> str:
+    """Format tool arguments for display, truncating long values."""
+    if not tool_input:
+        return ""
+    
+    args_parts = []
+    for key, value in tool_input.items():
+        value_str = str(value)
+        value_str = truncate_value(value_str)
+        args_parts.append(f"{key}={value_str}")
+    
+    return ", ".join(args_parts)
+
+
+def display_tool_call(tool_name: str, tool_input: dict):
+    """Display a tool call with arguments, truncating long values."""
+    
+    tool_icons = {
+        "read_file": "📖",
+        "write_file": "✏️",
+        "edit_file": "✂️",
+        "ls": "📁",
+        "glob": "🔍",
+        "grep": "🔎",
+        "shell": "⚡",
+        "web_search": "🌐",
+        "http_request": "🌍",
+        "task": "🤖",
+        "write_todos": "📋",
+    }
+    
+    icon = tool_icons.get(tool_name, "🔧")
+    args_str = format_tool_args(tool_input)
+    
+    # Display: icon tool_name(args)
+    if args_str:
+        console.print(f"[dim]{icon} {tool_name}({args_str})[/dim]")
+    else:
+        console.print(f"[dim]{icon} {tool_name}()[/dim]")
+
+
+def display_text_content(text: str):
+    """Display text content with markdown rendering."""
+    if text.strip():
+        if "```" in text or "#" in text or "**" in text:
+            md = Markdown(text)
+            console.print(md)
+        else:
+            console.print(text, style="white")
+
+
+def extract_and_display_content(message_content):
+    """Extract content from agent messages and display with rich formatting."""
     if isinstance(message_content, str):
-        return message_content
+        display_text_content(message_content)
+        return
 
     if isinstance(message_content, list):
-        parts = []
         for block in message_content:
             if isinstance(block, dict):
                 if block.get("type") == "text" and "text" in block:
-                    parts.append(block["text"])
+                    display_text_content(block["text"])
                 elif block.get("type") == "tool_use":
                     tool_name = block.get("name", "unknown_tool")
-                    parts.append(f"\n🔧 Using tool: {tool_name}")
-
-                    if "input" in block:
-                        tool_input = block["input"]
-                        if isinstance(tool_input, dict):
-                            for key, value in tool_input.items():
-                                if key in ["file_path", "content", "old_string", "new_string"]:
-                                    if len(str(value)) > 100:
-                                        parts.append(f"  • {key}: {str(value)[:50]}...")
-                                    else:
-                                        parts.append(f"  • {key}: {value}")
-                    parts.append("")
-
-        return "\n".join(parts).strip() if parts else ""
-
-    if hasattr(message_content, "__dict__"):
-        return ""
-    return str(message_content)
+                    tool_input = block.get("input", {})
+                    display_tool_call(tool_name, tool_input)
+                # Skip tool_result blocks - they're just noise
+                elif block.get("type") == "tool_result":
+                    pass  # Don't display tool results
 
 
 def execute_task(user_input: str):
     """Execute any task by passing it directly to the AI agent."""
-    print(f"\n🤖 Working on: {user_input[:60]}{'...' if len(user_input) > 60 else ''}\n")
-
+    console.print()
+    
+    config = {"configurable": {"thread_id": "main"}}
+    
+    # Initial run
+    result = None
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
         stream_mode="updates",
         subgraphs=True,
-        config={"thread_id": "main"},
+        config=config,
         durability="exit",
     ):
         chunk = list(chunk.values())[0]
-        if chunk is not None and "messages" in chunk and chunk["messages"]:
-            last_message = chunk["messages"][-1]
+        if chunk is not None:
+            # Check for interrupts
+            if "__interrupt__" in chunk:
+                result = chunk
+                break
+            
+            # Normal message processing
+            if "messages" in chunk and chunk["messages"]:
+                last_message = chunk["messages"][-1]
 
-            message_content = None
-            message_role = getattr(last_message, "role", None)
-            if isinstance(message_role, dict):
-                message_role = last_message.get("role", "unknown")
+                message_content = None
+                message_role = getattr(last_message, "type", None)
+                if isinstance(message_role, dict):
+                    message_role = last_message.get("role", "unknown")
 
-            if hasattr(last_message, "content"):
-                message_content = last_message.content
-            elif isinstance(last_message, dict) and "content" in last_message:
-                message_content = last_message["content"]
+                if hasattr(last_message, "content"):
+                    message_content = last_message.content
+                elif isinstance(last_message, dict) and "content" in last_message:
+                    message_content = last_message["content"]
 
-            if message_content:
-                content = extract_content_with_tools(message_content)
-
-                if content.strip():
+                if message_content:
+                    # Show tool results (truncated) and agent responses
                     if message_role == "tool":
-                        print(f"🔧 {content}\n")
-                    else:
-                        print(f"{content}\n")
+                        # Show truncated tool result
+                        result_str = str(message_content)
+                        result_str = truncate_value(result_str, MAX_RESULT_LENGTH)
+                        console.print(f"[dim]  → {result_str}[/dim]")
+                    elif message_role != "tool":
+                        # Show all non-tool messages (AI responses, user messages, etc.)
+                        extract_and_display_content(message_content)
+                        console.print()
+    
+    # Handle interrupts
+    if result and "__interrupt__" in result:
+        interrupts = result["__interrupt__"]
+        for interrupt_data in interrupts:
+            # Display the interrupt message
+            interrupt_msg = interrupt_data.value if hasattr(interrupt_data, "value") else str(interrupt_data)
+            
+            console.print()
+            console.print(Panel(
+                f"[yellow]{interrupt_msg}[/yellow]",
+                title="[bold yellow]⚠️  Approval Required[/bold yellow]",
+                border_style="yellow"
+            ))
+            console.print()
+            
+            # Ask user for decision
+            console.print("[bold]Choose an action:[/bold]")
+            console.print("  [green]a[/green] - Approve (execute)")
+            console.print("  [red]r[/red] - Reject (skip)")
+            
+            decision = Prompt.ask(
+                "\nYour decision",
+                choices=["a", "r"],
+                default="a"
+            )
+            
+            if decision == "a":
+                # Resume with approval
+                for _, chunk in agent.stream(
+                    Command(resume={"decision": "approve"}),
+                    stream_mode="updates",
+                    subgraphs=True,
+                    config=config,
+                    durability="exit",
+                ):
+                    chunk = list(chunk.values())[0]
+                    if chunk is not None and "messages" in chunk and chunk["messages"]:
+                        last_message = chunk["messages"][-1]
+                        message_role = getattr(last_message, "type", None)
+                        message_content = last_message.content if hasattr(last_message, "content") else None
+                        
+                        if message_content:
+                            if message_role == "tool":
+                                # Show truncated tool result
+                                result_str = str(message_content)
+                                result_str = truncate_value(result_str, MAX_RESULT_LENGTH)
+                                console.print(f"[dim]  → {result_str}[/dim]")
+                            else:
+                                extract_and_display_content(message_content)
+                                console.print()
+                            
+            elif decision == "r":
+                # Resume with rejection
+                console.print("[yellow]✓ Operation cancelled[/yellow]")
+                for _, chunk in agent.stream(
+                    Command(resume={"decision": "reject"}),
+                    stream_mode="updates",
+                    config=config,
+                    durability="exit",
+                ):
+                    pass  # Just consume the stream
+    
+    console.print()
 
 
 async def simple_cli():
     """Main CLI loop."""
-    print("🤖 Software Engineering CLI")
-    print("Type 'quit' to exit, 'help' for examples\n")
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]DeepAgents[/bold cyan] [dim]|[/dim] AI Coding Assistant",
+        border_style="cyan",
+        box=box.DOUBLE
+    ))
+    console.print("[dim]Type 'quit' to exit, 'help' for examples[/dim]")
+    console.print()
 
     while True:
-        user_input = input(">>> ").strip()
+        try:
+            console.print("[bold green]❯[/bold green] ", end="")
+            user_input = input().strip()
+        except EOFError:
+            break
 
         if not user_input:
             continue
 
         if user_input.lower() in ["quit", "exit", "q"]:
-            print("👋 Goodbye!")
+            console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
             break
 
         elif user_input.lower() == "help":
-            print("""
-Examples:
-• "Create a function to calculate fibonacci numbers"
-• "Debug this sorting code: [paste code]"
-• "Review my Flask app for security issues"
-• "Generate tests for this calculator class"
-""")
+            help_text = """
+[bold cyan]Examples:[/bold cyan]
+
+  [yellow]•[/yellow] Create a function to calculate fibonacci numbers
+  [yellow]•[/yellow] Debug this sorting code: [paste code]
+  [yellow]•[/yellow] Review my Flask app for security issues
+  [yellow]•[/yellow] Generate tests for this calculator class
+  [yellow]•[/yellow] Search for Python async best practices
+            """
+            console.print(Panel(help_text.strip(), border_style="cyan", box=box.ROUNDED))
+            console.print()
             continue
 
         else:
@@ -295,9 +457,9 @@ async def main():
     try:
         await simple_cli()
     except KeyboardInterrupt:
-        print("\n👋 Goodbye!")
+        console.print("\n\n[bold cyan]👋 Goodbye![/bold cyan]\n")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        console.print(f"\n[bold red]❌ Error:[/bold red] {e}\n")
 
 
 def cli_main():
