@@ -1,8 +1,7 @@
 """Middleware for providing subagents to an agent via a `task` tool."""
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, TypedDict, cast
-from typing_extensions import NotRequired
+from typing import Any, NotRequired, TypedDict, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, InterruptOnConfig
@@ -13,11 +12,6 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.runnables import Runnable
 from langchain_core.tools import StructuredTool
 from langgraph.types import Command
-
-try:
-    from langchain_anthropic.middleware.prompt_caching import AnthropicPromptCachingMiddleware
-except ImportError:
-    AnthropicPromptCachingMiddleware = None
 
 
 class SubAgent(TypedDict):
@@ -353,6 +347,9 @@ def _create_task_tool(
     ) -> str | Command:
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
         result = subagent.invoke(subagent_state)
+        if not runtime.tool_call_id:
+            value_error_msg = "Tool call ID is required for subagent invocation"
+            raise ValueError(value_error_msg)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     async def atask(
@@ -362,6 +359,9 @@ def _create_task_tool(
     ) -> str | Command:
         subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
         result = await subagent.ainvoke(subagent_state)
+        if not runtime.tool_call_id:
+            value_error_msg = "Tool call ID is required for subagent invocation"
+            raise ValueError(value_error_msg)
         return _return_command_with_state_update(result, runtime.tool_call_id)
 
     return StructuredTool.from_function(
