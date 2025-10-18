@@ -197,18 +197,11 @@ Example: `task(description="Debug the login function throwing TypeError", subage
 
 config = {"recursion_limit": 1000}
 
-# Interrupt on destructive operations (write, edit, shell)
-interrupt_config = {
-    "write_file": True,
-    "edit_file": True,
-    "shell": True,
-}
 
 agent = create_deep_agent(
     tools=[http_request, web_search],
     system_prompt=get_coding_instructions(),
     use_local_filesystem=True,
-    interrupt_on=interrupt_config,
 ).with_config(config)
 
 agent.checkpointer = InMemorySaver()
@@ -302,8 +295,6 @@ def execute_task(user_input: str):
     
     config = {"configurable": {"thread_id": "main"}}
     
-    # Initial run
-    result = None
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
         stream_mode="updates",
@@ -343,68 +334,6 @@ def execute_task(user_input: str):
                         # Show all non-tool messages (AI responses, user messages, etc.)
                         extract_and_display_content(message_content)
                         console.print()
-    
-    # Handle interrupts
-    if result and "__interrupt__" in result:
-        interrupts = result["__interrupt__"]
-        for interrupt_data in interrupts:
-            # Display the interrupt message
-            interrupt_msg = interrupt_data.value if hasattr(interrupt_data, "value") else str(interrupt_data)
-            
-            console.print()
-            console.print(Panel(
-                f"[yellow]{interrupt_msg}[/yellow]",
-                title="[bold yellow]⚠️  Approval Required[/bold yellow]",
-                border_style="yellow"
-            ))
-            console.print()
-            
-            # Ask user for decision
-            console.print("[bold]Choose an action:[/bold]")
-            console.print("  [green]a[/green] - Approve (execute)")
-            console.print("  [red]r[/red] - Reject (skip)")
-            
-            decision = Prompt.ask(
-                "\nYour decision",
-                choices=["a", "r"],
-                default="a"
-            )
-            
-            if decision == "a":
-                # Resume with approval
-                for _, chunk in agent.stream(
-                    Command(resume={"decision": "approve"}),
-                    stream_mode="updates",
-                    subgraphs=True,
-                    config=config,
-                    durability="exit",
-                ):
-                    chunk = list(chunk.values())[0]
-                    if chunk is not None and "messages" in chunk and chunk["messages"]:
-                        last_message = chunk["messages"][-1]
-                        message_role = getattr(last_message, "type", None)
-                        message_content = last_message.content if hasattr(last_message, "content") else None
-                        
-                        if message_content:
-                            if message_role == "tool":
-                                # Show truncated tool result
-                                result_str = str(message_content)
-                                result_str = truncate_value(result_str, MAX_RESULT_LENGTH)
-                                console.print(f"[dim]  → {result_str}[/dim]")
-                            else:
-                                extract_and_display_content(message_content)
-                                console.print()
-                            
-            elif decision == "r":
-                # Resume with rejection
-                console.print("[yellow]✓ Operation cancelled[/yellow]")
-                for _, chunk in agent.stream(
-                    Command(resume={"decision": "reject"}),
-                    stream_mode="updates",
-                    config=config,
-                    durability="exit",
-                ):
-                    pass  # Just consume the stream
     
     console.print()
 
