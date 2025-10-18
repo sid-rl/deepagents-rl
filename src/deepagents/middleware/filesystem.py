@@ -900,6 +900,7 @@ class FilesystemMiddleware(AgentMiddleware):
         long_term_memory: Whether to enable longterm memory support.
         system_prompt_extension: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
+        skills: Optional list of SkillDefinition to load into virtual filesystem.
 
     Raises:
         ValueError: If longterm memory is enabled but no store is available.
@@ -914,6 +915,10 @@ class FilesystemMiddleware(AgentMiddleware):
 
         # With long-term memory
         agent = create_agent(middleware=[FilesystemMiddleware(long_term_memory=True)])
+        
+        # With skills
+        skills = [{"name": "slack-gif", "files": {"SKILL.md": "..."}}]
+        agent = create_agent(middleware=[FilesystemMiddleware(skills=skills)])
         ```
     """
 
@@ -926,6 +931,7 @@ class FilesystemMiddleware(AgentMiddleware):
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
+        skills: list[dict[str, Any]] | None = None,
     ) -> None:
         """Initialize the filesystem middleware.
 
@@ -934,26 +940,70 @@ class FilesystemMiddleware(AgentMiddleware):
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
+            skills: Optional list of SkillDefinition to load into virtual filesystem.
         """
         self.long_term_memory = long_term_memory
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
-        self.system_prompt = FILESYSTEM_SYSTEM_PROMPT
+        self.skills = skills or []
+        
+        # Build system prompt with skills
+        base_prompt = FILESYSTEM_SYSTEM_PROMPT
         if system_prompt is not None:
-            self.system_prompt = system_prompt
+            base_prompt = system_prompt
         elif long_term_memory:
-            self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
+            base_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
+        
+        skills_prompt = self._build_skills_prompt()
+        self.system_prompt = base_prompt + skills_prompt
 
         self.tools = _get_filesystem_tools(custom_tool_descriptions, long_term_memory=long_term_memory)
-
-    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
-        """Validate that store is available if longterm memory is enabled.
-
+    
+    def _build_skills_prompt(self) -> str:
+        """Build the skills section of the system prompt.
+        
+        Returns:
+            System prompt text describing available skills, or empty string if no skills.
+        """
+        if not self.skills:
+            return ""
+        
+        from deepagents.skills import parse_skill_frontmatter
+        
+        prompt = "\n\n## Available Skills\n\nYou have access to the following skills:"
+        
+        for i, skill in enumerate(self.skills, 1):
+            skill_name = skill['name']
+            skill_path = f"/skills/{skill_name}/SKILL.md"
+            
+            # Try to extract description from SKILL.md if present
+            description = ""
+            skill_files = skill.get('files', {})
+            if 'SKILL.md' in skill_files:
+                try:
+                    content = skill_files['SKILL.md']
+                    if isinstance(content, str):
+                        frontmatter = parse_skill_frontmatter(content)
+                        description = frontmatter.get('description', '')
+                except Exception:
+                    pass
+            
+            prompt += f"\n\n{i}. **{skill_name}** ({skill_path})"
+            if description:
+                prompt += f"\n   - {description}"
+        
+        prompt += "\n\nTo use a skill, read its SKILL.md file using `read_file`. Skills may contain additional resources in scripts/, references/, and assets/ subdirectories."
+        
+        return prompt
+    
+    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
+        """Load skills into virtual filesystem and validate store if needed.
+        
         Args:
             state: The state of the agent.
             runtime: The LangGraph runtime.
 
         Returns:
-            The unmodified model request.
+            State update with skills loaded into filesystem, or None if no skills.
 
         Raises:
             ValueError: If long_term_memory is True but runtime.store is None.
@@ -961,7 +1011,24 @@ class FilesystemMiddleware(AgentMiddleware):
         if self.long_term_memory and runtime.store is None:
             msg = "Longterm memory is enabled, but no store is available"
             raise ValueError(msg)
-        return None
+        
+        # Load skills into virtual filesystem
+        if not self.skills:
+            return None
+        
+        files_update = {}
+        for skill in self.skills:
+            skill_name = skill['name']
+            skill_files = skill.get('files', {})
+            
+            for file_path, content in skill_files.items():
+                # Write to /skills/<skill_name>/<file_path>
+                full_path = f"/skills/{skill_name}/{file_path}"
+                files_update[full_path] = _create_file_data(content)
+        
+        return {"files": files_update}
+
+
 
     def wrap_model_call(
         self,

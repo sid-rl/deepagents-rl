@@ -18,51 +18,6 @@ dotenv.load_dotenv()
 tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY")) if os.environ.get("TAVILY_API_KEY") else None
 
 
-def execute_bash(command: str, timeout: int = 30, cwd: str = None) -> Dict[str, Any]:
-    """
-    Execute bash/shell commands safely.
-
-    Args:
-        command: Shell command to execute
-        timeout: Maximum execution time in seconds
-        cwd: Working directory for command execution
-
-    Returns:
-        Dictionary with execution results including stdout, stderr, and success status
-    """
-    try:
-        if platform.system() == "Windows":
-            shell_cmd = ["cmd", "/c", command]
-        else:
-            shell_cmd = ["bash", "-c", command]
-
-        result = subprocess.run(
-            shell_cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "return_code": result.returncode,
-        }
-
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "return_code": -1,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "stdout": "",
-            "stderr": f"Error executing command: {str(e)}",
-            "return_code": -1,
-        }
-
-
 def http_request(
     url: str,
     method: str = "GET",
@@ -230,7 +185,7 @@ Example: `task(description="Debug the login function throwing TypeError", subage
 config = {"recursion_limit": 1000}
 
 agent = create_deep_agent(
-    tools=[execute_bash, http_request, web_search],
+    tools=[http_request, web_search],
     system_prompt=get_coding_instructions(),
     use_local_filesystem=True,
 ).with_config(config)
@@ -280,6 +235,7 @@ def execute_task(user_input: str):
         stream_mode="updates",
         subgraphs=True,
         config={"thread_id": "main"},
+        durability="exit",
     ):
         chunk = list(chunk.values())[0]
         if chunk is not None and "messages" in chunk and chunk["messages"]:

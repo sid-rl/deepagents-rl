@@ -335,6 +335,12 @@ def _grep_impl(
 
 LOCAL_FILESYSTEM_SYSTEM_PROMPT = FILESYSTEM_SYSTEM_PROMPT + "\n" + FILESYSTEM_SYSTEM_PROMPT_GLOB_GREP_SUPPLEMENT
 
+# Skills discovery paths
+STANDARD_SKILL_PATHS = [
+    "~/.deepagents/skills",
+    "./.deepagents/skills",
+]
+
 
 def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, cwd: str | None = None):
     """Return tool instances for local filesystem operations."""
@@ -432,6 +438,10 @@ class LocalFilesystemMiddleware(AgentMiddleware):
     - edit_file
     - glob
     - grep
+    
+    Skills are automatically discovered from:
+    - ~/.deepagents/skills/ (personal skills)
+    - ./.deepagents/skills/ (project skills)
     """
 
     state_schema = FilesystemState
@@ -445,10 +455,117 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         cwd: str | None = None,
     ) -> None:
         self.cwd = cwd or os.getcwd()
+        
+        # Discover skills from standard locations
+        self.skills = self._discover_skills()
+        
+        # Build system prompt
         cwd_prompt = f"\n\nCurrent working directory: {self.cwd}\n\nWhen using filesystem tools (ls, read_file, write_file, edit_file, glob, grep), relative paths will be resolved relative to this directory."
-        self.system_prompt = (system_prompt or LOCAL_FILESYSTEM_SYSTEM_PROMPT) + cwd_prompt
+        base_prompt = system_prompt or LOCAL_FILESYSTEM_SYSTEM_PROMPT
+        skills_prompt = self._build_skills_prompt()
+        
+        self.system_prompt = base_prompt + cwd_prompt + skills_prompt
         self.tools = _get_local_filesystem_tools(custom_tool_descriptions, cwd=self.cwd)
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
+    
+    def _discover_skills(self) -> list[dict[str, str]]:
+        """Discover skills from standard filesystem locations.
+        
+        Returns:
+            List of skill metadata dictionaries with keys: name, path, description, source.
+        """
+        from deepagents.skills import parse_skill_frontmatter
+        
+        discovered = {}
+        
+        for base_path in STANDARD_SKILL_PATHS:
+            # Expand ~ to home directory
+            expanded_path = os.path.expanduser(base_path)
+            
+            # Resolve relative paths against cwd
+            if not os.path.isabs(expanded_path):
+                expanded_path = os.path.join(self.cwd, expanded_path)
+            
+            if not os.path.exists(expanded_path):
+                continue
+            
+            # Find all SKILL.md files
+            try:
+                skill_files = _glob_impl(
+                    pattern="**/SKILL.md",
+                    path=expanded_path,
+                    max_results=1000,
+                    recursive=True,
+                )
+                
+                # Parse the glob output (skip header line)
+                if "Found" not in skill_files:
+                    continue
+                    
+                lines = skill_files.split('\n')
+                skill_paths = [line for line in lines[2:] if line.strip()]  # Skip header and empty
+                
+                for skill_path in skill_paths:
+                    try:
+                        # Read SKILL.md file
+                        content = _read_file_impl(skill_path, cwd=None)
+                        if content.startswith("Error:"):
+                            continue
+                        
+                        # Remove line numbers from cat -n format
+                        content_lines = []
+                        for line in content.split('\n'):
+                            # Format is "     1\tcontent"
+                            if '\t' in line:
+                                content_lines.append(line.split('\t', 1)[1])
+                        actual_content = '\n'.join(content_lines)
+                        
+                        # Parse YAML frontmatter
+                        frontmatter = parse_skill_frontmatter(actual_content)
+                        if not frontmatter.get('name'):
+                            continue
+                        
+                        skill_name = frontmatter['name']
+                        source = "project" if "./.deepagents" in base_path else "personal"
+                        
+                        # Project skills override personal skills
+                        discovered[skill_name] = {
+                            "name": skill_name,
+                            "path": skill_path,
+                            "description": frontmatter.get('description', ''),
+                            "version": frontmatter.get('version', ''),
+                            "source": source,
+                        }
+                    except Exception:
+                        # Skip skills that fail to parse
+                        continue
+                        
+            except Exception:
+                # Skip paths that fail to glob
+                continue
+        
+        return list(discovered.values())
+    
+    def _build_skills_prompt(self) -> str:
+        """Build the skills section of the system prompt.
+        
+        Returns:
+            System prompt text describing available skills, or empty string if no skills.
+        """
+        if not self.skills:
+            return ""
+        
+        prompt = "\n\n## Available Skills\n\nYou have access to the following skills:"
+        
+        for i, skill in enumerate(self.skills, 1):
+            prompt += f"\n\n{i}. **{skill['name']}** ({skill['path']})"
+            if skill['description']:
+                prompt += f"\n   - {skill['description']}"
+            prompt += f"\n   - Source: {skill['source']}"
+        
+        prompt += "\n\nTo use a skill, read its SKILL.md file using `read_file`. Skills may contain additional resources in scripts/, references/, and assets/ subdirectories."
+        
+        return prompt
 
     def wrap_model_call(
         self,
