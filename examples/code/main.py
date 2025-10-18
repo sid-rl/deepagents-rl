@@ -125,51 +125,47 @@ def extract_content_with_tools(message_content) -> str:
     return str(message_content)
 
 
-async def execute_task(user_input: str, progress: ProgressTracker):
+def execute_task(user_input: str, progress: ProgressTracker):
     """Execute any task by passing it directly to the AI agent."""
-    try:
-        progress.start_task(user_input)
+    progress.start_task(user_input)
 
-        print(f"\n🤖 AI Agent is working on your request...")
+    print(f"\n🤖 AI Agent is working on your request...")
 
-        # Stream the agent's response with interrupt handling
-        async for _, chunk in agent.astream(
-            {"messages": [{"role": "user", "content": user_input}]},
-            stream_mode="updates",
-            subgraphs=True,
-            config={"thread_id": "main"},
-        ):
-            chunk = list(chunk.values())[0]
-            if "messages" in chunk and chunk["messages"]:
-                last_message = chunk["messages"][-1]
+    # Stream the agent's response with interrupt handling
+    for _, chunk in agent.stream(
+        {"messages": [{"role": "user", "content": user_input}]},
+        stream_mode="updates",
+        subgraphs=True,
+        config={"thread_id": "main"},
+    ):
+        chunk = list(chunk.values())[0]
+        if "messages" in chunk and chunk["messages"]:
+            last_message = chunk["messages"][-1]
 
-                # Handle different message types
-                message_content = None
-                message_role = getattr(last_message, "role", None)
-                if isinstance(message_role, dict):
-                    message_role = last_message.get("role", "unknown")
+            # Handle different message types
+            message_content = None
+            message_role = getattr(last_message, "role", None)
+            if isinstance(message_role, dict):
+                message_role = last_message.get("role", "unknown")
 
-                if hasattr(last_message, "content"):
-                    message_content = last_message.content
-                elif isinstance(last_message, dict) and "content" in last_message:
-                    message_content = last_message["content"]
+            if hasattr(last_message, "content"):
+                message_content = last_message.content
+            elif isinstance(last_message, dict) and "content" in last_message:
+                message_content = last_message["content"]
 
-                if message_content:
-                    content = extract_content_with_tools(message_content)
+            if message_content:
+                content = extract_content_with_tools(message_content)
 
-                    if content.strip():
-                        # Show tool results with a different icon
-                        if message_role == "tool":
-                            print(f"\n🔧 Tool result: {content}")
-                        else:
-                            print(f"\n🤖 {content}")
-                        print("─" * 40)
+                if content.strip():
+                    # Show tool results with a different icon
+                    if message_role == "tool":
+                        print(f"\n🔧 Tool result: {content}")
+                    else:
+                        print(f"\n🤖 {content}")
+                    print("─" * 40)
 
-        progress.complete_task()
+    progress.complete_task()
 
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        print("💡 Try rephrasing your request.")
 
 
 async def simple_cli():
@@ -185,45 +181,36 @@ async def simple_cli():
     tasks_completed = 0
 
     while True:
-        try:
-            # Show simple session info
-            session_time = datetime.now() - session_start
-            print(
-                f"\n┌─ Session: {session_time.seconds // 60}m {session_time.seconds % 60}s | Tasks: {tasks_completed} ─┐"
-            )
+        # Show simple session info
+        session_time = datetime.now() - session_start
+        print(
+            f"\n┌─ Session: {session_time.seconds // 60}m {session_time.seconds % 60}s | Tasks: {tasks_completed} ─┐"
+        )
 
-            user_input = input("🛠️  What can I help you build? ").strip()
+        user_input = input("🛠️  What can I help you build? ").strip()
 
-            if not user_input:
-                continue
+        if not user_input:
+            continue
 
-            # Handle only essential utility commands
-            if user_input.lower() in ["quit", "exit", "q"]:
-                print(f"\n👋 Thanks for using the CLI!")
-                print(f"📊 Completed {tasks_completed} tasks in {session_time}")
-                break
-
-            elif user_input.lower() == "help":
-                print_help()
-                continue
-
-            elif user_input.lower() == "clear":
-                print("\033[2J\033[H", end="")  # Clear screen
-                print_banner()
-                continue
-
-            # Everything else goes directly to the agent
-            else:
-                await execute_task(user_input, progress)
-                tasks_completed += 1
-
-        except KeyboardInterrupt:
-            print(f"\n\n👋 Thanks for using the CLI!")
-            print(f"📊 Completed {tasks_completed} tasks")
+        # Handle only essential utility commands
+        if user_input.lower() in ["quit", "exit", "q"]:
+            print(f"\n👋 Thanks for using the CLI!")
+            print(f"📊 Completed {tasks_completed} tasks in {session_time}")
             break
-        except Exception as e:
-            print(f"\n❌ Unexpected error: {e}")
-            print("💡 Please try again or type 'help'.")
+
+        elif user_input.lower() == "help":
+            print_help()
+            continue
+
+        elif user_input.lower() == "clear":
+            print("\033[2J\033[H", end="")  # Clear screen
+            print_banner()
+            continue
+
+        # Everything else goes directly to the agent
+        else:
+            execute_task(user_input, progress)
+            tasks_completed += 1
 
 
 async def main():
