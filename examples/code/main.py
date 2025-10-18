@@ -52,6 +52,7 @@ def execute_task(user_input: str):
         stream_mode="updates",
         subgraphs=True,
         config={"thread_id": "main"},
+        durability="exit",
     ):
         chunk = list(chunk.values())[0]
         if chunk is not None and "messages" in chunk and chunk["messages"]:
