@@ -112,11 +112,6 @@ def create_deep_agent(
             "Skills are automatically discovered from ~/.deepagents/skills/ and ./.deepagents/skills/. "
             "To use custom skills, set use_local_filesystem=False."
         )
-    
-    if not use_local_filesystem and skills is not None:
-        # Validate skills format
-        if not isinstance(skills, list):
-            raise ValueError("skills must be a list[SkillDefinition] when use_local_filesystem=False")
 
     # Choose filesystem middleware kind
     def _fs_middleware() -> list[AgentMiddleware]:

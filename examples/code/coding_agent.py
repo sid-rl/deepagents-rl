@@ -10,7 +10,6 @@ from langgraph.types import Command
 from coding_instructions import get_coding_instructions
 from langchain_core.tools import tool
 from langchain_core.messages import ToolMessage
-from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 
 import dotenv
 
@@ -126,14 +125,8 @@ coding_instructions = get_coding_instructions()
 
 config = {"recursion_limit": 1000}
 
-shell_middleware = ShellToolMiddleware(
-    workspace_root=os.getcwd(),
-    execution_policy=HostExecutionPolicy()
-)
-
 agent = create_deep_agent(
     tools=[http_request, web_search],
     system_prompt=coding_instructions,
     use_local_filesystem=True,
-    middleware=[shell_middleware],
 ).with_config(config)
