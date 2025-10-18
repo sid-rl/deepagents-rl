@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from langchain.agents.middleware.types import AgentMiddleware, AgentState
+from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import RemoveMessage, ToolMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
@@ -11,11 +11,7 @@ from langgraph.runtime import Runtime
 class PatchToolCallsMiddleware(AgentMiddleware):
     """Middleware to patch dangling tool calls in the messages history."""
 
-    def __init__(self) -> None:
-        """Initialize the PatchToolCallsMiddleware."""
-        super().__init__()
-
-    def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:  # noqa: ARG002
+    def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
         """Before the agent runs, handle dangling tool calls from the most recent AIMessage."""
         messages = state["messages"]
         if not messages or len(messages) == 0:
