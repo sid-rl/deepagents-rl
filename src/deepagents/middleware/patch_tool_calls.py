@@ -12,7 +12,7 @@ class PatchToolCallsMiddleware(AgentMiddleware):
     """Middleware to patch dangling tool calls in the messages history."""
 
     def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:  # noqa: ARG002
-        """Before the agent runs, handle dangling tool calls from the most recent AIMessage."""
+        """Before the agent runs, handle dangling tool calls from any AIMessage."""
         messages = state["messages"]
         if not messages or len(messages) == 0:
             return None
