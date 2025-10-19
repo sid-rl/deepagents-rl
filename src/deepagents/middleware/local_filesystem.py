@@ -21,6 +21,7 @@ from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, Mod
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
+from langgraph.config import get_config
 from langchain_core.tools import tool
 from deepagents.middleware.filesystem import (
     _create_file_data,
@@ -56,7 +57,23 @@ LOCAL_EDIT_FILE_TOOL_DESCRIPTION = EDIT_DESCRIPTION
 # -----------------------------
 
 def _resolve_path(path: str, cwd: str) -> str:
-    """Resolve relative paths against CWD, leave absolute paths unchanged."""
+    """Resolve relative paths against CWD, leave absolute paths unchanged.
+    
+    Special handling: /memories/* paths are redirected to ~/.deepagents/<agent_name>/
+    agent_name is retrieved from the runtime config.
+    """
+    if path.startswith("/memories"):
+        # Get agent_name from config
+        config = get_config()
+        agent_name = config.get("configurable", {}).get("agent_name", "agent") if config else "agent"
+        
+        agent_dir = pathlib.Path.home() / ".deepagents" / agent_name
+        if path == "/memories":
+            return str(agent_dir)
+        else:
+            relative_part = path[len("/memories/"):]
+            return str(agent_dir / relative_part)
+    
     if os.path.isabs(path):
         return path
     return str(pathlib.Path(cwd) / path)
@@ -343,7 +360,10 @@ STANDARD_SKILL_PATHS = [
 
 
 def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, cwd: str | None = None):
-    """Return tool instances for local filesystem operations."""
+    """Return tool instances for local filesystem operations.
+    
+    agent_name is retrieved from runtime config via get_config() when tools are called.
+    """
     # We already decorated read/write/edit/glob/grep with @tool including descriptions
     # Only `ls` needs a manual wrapper to attach a description.
     ls_description = (

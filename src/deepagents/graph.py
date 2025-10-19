@@ -88,6 +88,7 @@ def create_deep_agent(
         use_local_filesystem: If True, injects LocalFilesystemMiddleware (tools operate on disk).
             When True, longterm memory is not supported and `use_longterm_memory` must be False.
             Skills are automatically discovered from ~/.deepagents/skills/ and ./.deepagents/skills/.
+            The agent_name for memory storage can be passed via config: {"configurable": {"agent_name": "myagent"}}.
         skills: Optional list of SkillDefinition for virtual filesystem mode. Only valid when
             use_local_filesystem=False. Skills are loaded into /skills/<name>/ in virtual filesystem.
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to

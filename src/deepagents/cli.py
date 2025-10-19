@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import asyncio
 import os
 import subprocess
@@ -135,8 +136,8 @@ def web_search(
         }
 
 
-def get_coding_instructions() -> str:
-    """Get the coding agent instructions."""
+def get_default_coding_instructions() -> str:
+    """Get the default coding agent instructions."""
     return """You are a coding assistant that helps users with software engineering tasks.
 
 # Tone and Style
@@ -195,16 +196,21 @@ Example: `task(description="Debug the login function throwing TypeError", subage
 """
 
 
+def get_coding_instructions(agent_name: str) -> str:
+    """Get the coding agent instructions from file or create default."""
+    agent_dir = Path.home() / ".deepagents" / agent_name
+    agent_prompt_file = agent_dir / "agent.md"
+    
+    if agent_prompt_file.exists():
+        return agent_prompt_file.read_text()
+    else:
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        default_prompt = get_default_coding_instructions()
+        agent_prompt_file.write_text(default_prompt)
+        return default_prompt
+
+
 config = {"recursion_limit": 1000}
-
-
-agent = create_deep_agent(
-    tools=[http_request, web_search],
-    system_prompt=get_coding_instructions(),
-    use_local_filesystem=True,
-).with_config(config)
-
-agent.checkpointer = InMemorySaver()
 
 # Constants for display truncation
 MAX_ARG_LENGTH = 200
@@ -289,11 +295,11 @@ def extract_and_display_content(message_content):
                     pass  # Don't display tool results
 
 
-def execute_task(user_input: str):
+def execute_task(user_input: str, agent, agent_name: str):
     """Execute any task by passing it directly to the AI agent."""
     console.print()
     
-    config = {"configurable": {"thread_id": "main"}}
+    config = {"configurable": {"thread_id": "main", "agent_name": agent_name}}
     
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
@@ -324,21 +330,62 @@ def execute_task(user_input: str):
                     message_content = last_message["content"]
 
                 if message_content:
-                    # Show tool results (truncated) and agent responses
+                    # Show tool calls with truncated args
+                    if message_role != "tool":
+                        if isinstance(message_content, list):
+                            for block in message_content:
+                                if isinstance(block, dict) and block.get("type") == "tool_use":
+                                    tool_name = block.get("name", "unknown_tool")
+                                    tool_input = block.get("input", {})
+                                    
+                                    tool_icons = {
+                                        "read_file": "📖",
+                                        "write_file": "✏️",
+                                        "edit_file": "✂️",
+                                        "ls": "📁",
+                                        "glob": "🔍",
+                                        "grep": "🔎",
+                                        "shell": "⚡",
+                                        "web_search": "🌐",
+                                        "http_request": "🌍",
+                                        "task": "🤖",
+                                        "write_todos": "📋",
+                                    }
+                                    
+                                    icon = tool_icons.get(tool_name, "🔧")
+                                    args_str = format_tool_args(tool_input)
+                                    
+                                    if args_str:
+                                        console.print(f"[dim]{icon} {tool_name}({args_str})[/dim]")
+                                    else:
+                                        console.print(f"[dim]{icon} {tool_name}()[/dim]")
+                    
+                    # Show tool results with truncation
                     if message_role == "tool":
-                        # Show truncated tool result
                         result_str = str(message_content)
                         result_str = truncate_value(result_str, MAX_RESULT_LENGTH)
                         console.print(f"[dim]  → {result_str}[/dim]")
-                    elif message_role != "tool":
-                        # Show all non-tool messages (AI responses, user messages, etc.)
-                        extract_and_display_content(message_content)
-                        console.print()
+                    
+                    # Show text content
+                    if message_role != "tool":
+                        has_text_content = False
+                        if isinstance(message_content, str):
+                            has_text_content = True
+                        elif isinstance(message_content, list):
+                            for block in message_content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "text" and block.get("text", "").strip():
+                                        has_text_content = True
+                                        break
+                        
+                        if has_text_content:
+                            extract_and_display_content(message_content)
+                            console.print()
     
     console.print()
 
 
-async def simple_cli():
+async def simple_cli(agent, agent_name: str):
     """Main CLI loop."""
     console.print()
     console.print(Panel.fit(
@@ -378,13 +425,47 @@ async def simple_cli():
             continue
 
         else:
-            execute_task(user_input)
+            execute_task(user_input, agent, agent_name)
 
 
-async def main():
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="DeepAgents - AI Coding Assistant",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    
+    # Custom type to validate agent name
+    def validate_agent_name(value):
+        if value == "agent":
+            raise argparse.ArgumentTypeError(
+                "Cannot explicitly pass 'agent' as the agent name. Use a different name or omit --agent to use the default."
+            )
+        return value
+    
+    parser.add_argument(
+        "--agent",
+        type=validate_agent_name,
+        default=None,
+        help="Agent identifier for separate memory stores (default: agent). Cannot explicitly pass 'agent'.",
+    )
+    
+    return parser.parse_args()
+
+
+async def main(agent_name: str):
     """Main entry point."""
+    # Create agent
+    agent = create_deep_agent(
+        tools=[http_request, web_search],
+        system_prompt=get_coding_instructions(agent_name),
+        use_local_filesystem=True,
+    ).with_config(config)
+    
+    agent.checkpointer = InMemorySaver()
+    
     try:
-        await simple_cli()
+        await simple_cli(agent, agent_name)
     except KeyboardInterrupt:
         console.print("\n\n[bold cyan]👋 Goodbye![/bold cyan]\n")
     except Exception as e:
@@ -393,7 +474,8 @@ async def main():
 
 def cli_main():
     """Entry point for console script."""
-    asyncio.run(main())
+    args = parse_args()
+    asyncio.run(main(args.agent or "agent"))
 
 
 if __name__ == "__main__":
