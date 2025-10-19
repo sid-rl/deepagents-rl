@@ -21,6 +21,7 @@ from rich.text import Text
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.prompt import Prompt
+import shutil
 from rich import box
 
 import dotenv
@@ -138,62 +139,8 @@ def web_search(
 
 def get_default_coding_instructions() -> str:
     """Get the default coding agent instructions."""
-    return """You are a coding assistant that helps users with software engineering tasks.
-
-# Tone and Style
-Be concise and direct. Answer in fewer than 4 lines unless the user asks for detail.
-After working on a file, just stop - don't explain what you did unless asked.
-Avoid unnecessary introductions or conclusions.
-
-When you run non-trivial bash commands, briefly explain what they do.
-
-## Proactiveness
-Take action when asked, but don't surprise users with unrequested actions.
-If asked how to approach something, answer first before taking action.
-
-## Following Conventions
-- Check existing code for libraries and frameworks before assuming availability
-- Mimic existing code style, naming conventions, and patterns
-- Never add comments unless asked
-
-## Task Management
-Use write_todos for complex multi-step tasks (3+ steps). Mark tasks in_progress before starting, completed immediately after finishing.
-For simple 1-2 step tasks, just do them without todos.
-
-## Tools
-
-### execute_bash
-Execute shell commands. Always quote paths with spaces.
-Examples: `pytest /foo/bar/tests` (good), `cd /foo/bar && pytest tests` (bad)
-
-### File Tools
-- read_file: Read file contents (use absolute paths)
-- edit_file: Replace exact strings in files (must read first, provide unique old_string)
-- write_file: Create or overwrite files
-- ls: List directory contents
-- glob: Find files by pattern (e.g., "**/*.py")
-- grep: Search file contents
-
-Always use absolute paths starting with /.
-
-### web_search
-Search for documentation, error solutions, and code examples.
-
-### http_request
-Make HTTP requests to APIs (GET, POST, etc.).
-
-## Code References
-When referencing code, use format: `file_path:line_number`
-
-## Sub Agents
-Use specialized sub-agents for complex one-off tasks:
-
-- **code-reviewer**: Review code quality, security, best practices
-- **debugger**: Investigate errors and bugs
-- **test-generator**: Create comprehensive test suites
-
-Example: `task(description="Debug the login function throwing TypeError", subagent_type="debugger")`
-"""
+    default_prompt_path = Path(__file__).parent / "default_agent_prompt.md"
+    return default_prompt_path.read_text()
 
 
 def get_coding_instructions(agent_name: str) -> str:
@@ -202,12 +149,14 @@ def get_coding_instructions(agent_name: str) -> str:
     agent_prompt_file = agent_dir / "agent.md"
     
     if agent_prompt_file.exists():
-        return agent_prompt_file.read_text()
+        agent_memory_content = agent_prompt_file.read_text()
     else:
         agent_dir.mkdir(parents=True, exist_ok=True)
         default_prompt = get_default_coding_instructions()
         agent_prompt_file.write_text(default_prompt)
-        return default_prompt
+        agent_memory_content = default_prompt
+    
+    return f"<agent_memory>\n{agent_memory_content}\n</agent_memory>"
 
 
 config = {"recursion_limit": 1000}
@@ -428,12 +377,113 @@ async def simple_cli(agent, agent_name: str):
             execute_task(user_input, agent, agent_name)
 
 
+def list_agents():
+    """List all available agents."""
+    agents_dir = Path.home() / ".deepagents"
+    
+    if not agents_dir.exists() or not any(agents_dir.iterdir()):
+        console.print("[yellow]No agents found.[/yellow]")
+        console.print("[dim]Agents will be created in ~/.deepagents/ when you first use them.[/dim]")
+        return
+    
+    console.print("\n[bold cyan]Available Agents:[/bold cyan]\n")
+    
+    for agent_path in sorted(agents_dir.iterdir()):
+        if agent_path.is_dir():
+            agent_name = agent_path.name
+            agent_md = agent_path / "agent.md"
+            
+            if agent_md.exists():
+                console.print(f"  [green]•[/green] [bold]{agent_name}[/bold]")
+                console.print(f"    [dim]{agent_path}[/dim]")
+            else:
+                console.print(f"  [yellow]•[/yellow] [bold]{agent_name}[/bold] [dim](incomplete)[/dim]")
+                console.print(f"    [dim]{agent_path}[/dim]")
+    
+    console.print()
+
+
+def reset_agent(agent_name: str, source_agent: str = None):
+    """Reset an agent to default or copy from another agent."""
+    agents_dir = Path.home() / ".deepagents"
+    agent_dir = agents_dir / agent_name
+    
+    if source_agent:
+        source_dir = agents_dir / source_agent
+        source_md = source_dir / "agent.md"
+        
+        if not source_md.exists():
+            console.print(f"[bold red]Error:[/bold red] Source agent '{source_agent}' not found or has no agent.md")
+            return
+        
+        source_content = source_md.read_text()
+        action_desc = f"contents of agent '{source_agent}'"
+    else:
+        source_content = get_default_coding_instructions()
+        action_desc = "default prompt"
+    
+    if agent_dir.exists():
+        shutil.rmtree(agent_dir)
+        console.print(f"[yellow]Removed existing agent directory:[/yellow] {agent_dir}")
+    
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    agent_md = agent_dir / "agent.md"
+    agent_md.write_text(source_content)
+    
+    console.print(f"[bold green]✓[/bold green] Agent '{agent_name}' reset to {action_desc}")
+    console.print(f"[dim]Location: {agent_dir}[/dim]\n")
+
+
+def show_help():
+    """Show help information."""
+    help_text = """
+[bold cyan]DeepAgents - AI Coding Assistant[/bold cyan]
+
+[bold]Usage:[/bold]
+  deepagents [--agent NAME]     Start interactive session with specified agent
+  deepagents list               List all available agents
+  deepagents reset AGENT        Reset agent to default prompt
+  deepagents reset AGENT --from SOURCE   Reset agent to copy of another agent
+  deepagents help               Show this help message
+
+[bold]Examples:[/bold]
+  deepagents                    # Start with default agent
+  deepagents --agent mybot      # Start with agent named 'mybot'
+  deepagents list               # List all agents
+  deepagents reset mybot        # Reset mybot to default
+  deepagents reset mybot --from other   # Reset mybot to copy of 'other' agent
+
+[bold]Agent Storage:[/bold]
+  Agents are stored in: ~/.deepagents/AGENT_NAME/
+  Each agent has an agent.md file containing its prompt
+
+[bold]Interactive Commands:[/bold]
+  quit, exit, q    Exit the session
+  help             Show usage examples
+    """
+    console.print(help_text)
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="DeepAgents - AI Coding Assistant",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
     )
+    
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+    
+    # List command
+    subparsers.add_parser("list", help="List all available agents")
+    
+    # Help command
+    subparsers.add_parser("help", help="Show help information")
+    
+    # Reset command
+    reset_parser = subparsers.add_parser("reset", help="Reset an agent")
+    reset_parser.add_argument("agent_name", help="Name of agent to reset")
+    reset_parser.add_argument("--from", dest="source_agent", help="Copy prompt from another agent")
     
     # Custom type to validate agent name
     def validate_agent_name(value):
@@ -443,6 +493,7 @@ def parse_args():
             )
         return value
     
+    # Default interactive mode
     parser.add_argument(
         "--agent",
         type=validate_agent_name,

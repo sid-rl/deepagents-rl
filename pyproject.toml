@@ -49,6 +49,7 @@ include = ["deepagents*"]
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
+"deepagents" = ["*.md"]
 
 [tool.ruff]
 line-length = 150
