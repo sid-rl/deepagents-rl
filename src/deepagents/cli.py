@@ -575,6 +575,12 @@ def cli_main():
     elif args.command == "reset":
         reset_agent(args.agent, args.source_agent)
     else:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            console.print("[bold red]Error:[/bold red] ANTHROPIC_API_KEY environment variable is not set.")
+            console.print("Please set your Anthropic API key:")
+            console.print("  export ANTHROPIC_API_KEY=your_api_key_here")
+            console.print("\nOr add it to your .env file.")
+            return
         asyncio.run(main(args.agent, args.no_memory))
 
 
