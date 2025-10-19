@@ -542,9 +542,13 @@ async def main(agent_name: str, no_memory: bool):
     # If memory is disabled, set agent_name to None
     effective_agent_name = None if no_memory else agent_name
     
-    # Create agent
+    # Create agent with conditional tools
+    tools = [http_request]
+    if tavily_client is not None:
+        tools.append(web_search)
+    
     agent = create_deep_agent(
-        tools=[http_request, web_search],
+        tools=tools,
         system_prompt=get_coding_instructions(effective_agent_name, long_term_memory=long_term_memory),
         use_local_filesystem=True,
         long_term_memory=long_term_memory,
