@@ -137,14 +137,43 @@ def web_search(
         }
 
 
-def get_default_coding_instructions() -> str:
-    """Get the default coding agent instructions."""
+def get_default_coding_instructions(include_memory: bool = True) -> str:
+    """Get the default coding agent instructions.
+    
+    Args:
+        include_memory: If False, removes the Long-term Memory section from the prompt.
+    """
     default_prompt_path = Path(__file__).parent / "default_agent_prompt.md"
-    return default_prompt_path.read_text()
+    prompt = default_prompt_path.read_text()
+    
+    if not include_memory:
+        # Remove the Long-term Memory section
+        lines = prompt.split('\n')
+        result_lines = []
+        skip = False
+        
+        for line in lines:
+            if line.strip() == "## Long-term Memory":
+                skip = True
+                continue
+            if skip and line.startswith('##'):
+                skip = False
+            if not skip:
+                result_lines.append(line)
+        
+        prompt = '\n'.join(result_lines).rstrip() + '\n'
+    
+    return prompt
 
 
-def get_coding_instructions(agent_name: str) -> str:
-    """Get the coding agent instructions from file or create default."""
+def get_coding_instructions(agent_name: str | None, long_term_memory: bool = False) -> str:
+    """Get the coding agent instructions from file or create default.
+    
+    If agent_name is None or long_term_memory is False, returns default instructions without memory features.
+    """
+    if agent_name is None or not long_term_memory:
+        return get_default_coding_instructions(include_memory=False)
+    
     agent_dir = Path.home() / ".deepagents" / agent_name
     agent_prompt_file = agent_dir / "agent.md"
     
@@ -152,7 +181,7 @@ def get_coding_instructions(agent_name: str) -> str:
         agent_memory_content = agent_prompt_file.read_text()
     else:
         agent_dir.mkdir(parents=True, exist_ok=True)
-        default_prompt = get_default_coding_instructions()
+        default_prompt = get_default_coding_instructions(include_memory=True)
         agent_prompt_file.write_text(default_prompt)
         agent_memory_content = default_prompt
     
@@ -244,11 +273,11 @@ def extract_and_display_content(message_content):
                     pass  # Don't display tool results
 
 
-def execute_task(user_input: str, agent, agent_name: str):
+def execute_task(user_input: str, agent, agent_name: str | None):
     """Execute any task by passing it directly to the AI agent."""
     console.print()
     
-    config = {"configurable": {"thread_id": "main", "agent_name": agent_name}}
+    config = {"configurable": {"thread_id": "main", "agent_name": agent_name}} if agent_name else {"configurable": {"thread_id": "main"}}
     
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
@@ -334,7 +363,7 @@ def execute_task(user_input: str, agent, agent_name: str):
     console.print()
 
 
-async def simple_cli(agent, agent_name: str):
+async def simple_cli(agent, agent_name: str | None):
     """Main CLI loop."""
     console.print()
     console.print(Panel.fit(
@@ -342,7 +371,7 @@ async def simple_cli(agent, agent_name: str):
         border_style="cyan",
         box=box.DOUBLE
     ))
-    console.print("[dim]Type 'quit' to exit, 'help' for examples[/dim]")
+    console.print("[dim]Type 'quit' to exit[/dim]")
     console.print()
 
     while True:
@@ -359,19 +388,7 @@ async def simple_cli(agent, agent_name: str):
             console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
             break
 
-        elif user_input.lower() == "help":
-            help_text = """
-[bold cyan]Examples:[/bold cyan]
 
-  [yellow]•[/yellow] Create a function to calculate fibonacci numbers
-  [yellow]•[/yellow] Debug this sorting code: [paste code]
-  [yellow]•[/yellow] Review my Flask app for security issues
-  [yellow]•[/yellow] Generate tests for this calculator class
-  [yellow]•[/yellow] Search for Python async best practices
-            """
-            console.print(Panel(help_text.strip(), border_style="cyan", box=box.ROUNDED))
-            console.print()
-            continue
 
         else:
             execute_task(user_input, agent, agent_name)
@@ -440,18 +457,28 @@ def show_help():
 [bold cyan]DeepAgents - AI Coding Assistant[/bold cyan]
 
 [bold]Usage:[/bold]
-  deepagents [--agent NAME]     Start interactive session with specified agent
-  deepagents list               List all available agents
-  deepagents reset AGENT        Reset agent to default prompt
-  deepagents reset AGENT --from SOURCE   Reset agent to copy of another agent
-  deepagents help               Show this help message
+  deepagents [--agent NAME] [--no-memory]    Start interactive session
+  deepagents list                            List all available agents
+  deepagents reset --agent AGENT             Reset agent to default prompt
+  deepagents reset --agent AGENT --target SOURCE   Reset agent to copy of another agent
+  deepagents help                            Show this help message
 
 [bold]Examples:[/bold]
-  deepagents                    # Start with default agent
-  deepagents --agent mybot      # Start with agent named 'mybot'
-  deepagents list               # List all agents
-  deepagents reset mybot        # Reset mybot to default
-  deepagents reset mybot --from other   # Reset mybot to copy of 'other' agent
+  deepagents                          # Start with default agent (long-term memory enabled)
+  deepagents --agent mybot            # Start with agent named 'mybot'
+  deepagents --no-memory              # Start without long-term memory
+  deepagents list                     # List all agents
+  deepagents reset --agent mybot      # Reset mybot to default
+  deepagents reset --agent mybot --target other   # Reset mybot to copy of 'other' agent
+
+[bold]Long-term Memory:[/bold]
+  By default, long-term memory is ENABLED using agent name 'agent'.
+  Memory includes:
+  - Persistent agent.md file with your instructions
+  - /memories/ folder for storing context across sessions
+  
+  Use --no-memory to disable these features.
+  Note: --agent and --no-memory cannot be used together.
 
 [bold]Agent Storage:[/bold]
   Agents are stored in: ~/.deepagents/AGENT_NAME/
@@ -482,41 +509,51 @@ def parse_args():
     
     # Reset command
     reset_parser = subparsers.add_parser("reset", help="Reset an agent")
-    reset_parser.add_argument("agent_name", help="Name of agent to reset")
-    reset_parser.add_argument("--from", dest="source_agent", help="Copy prompt from another agent")
-    
-    # Custom type to validate agent name
-    def validate_agent_name(value):
-        if value == "agent":
-            raise argparse.ArgumentTypeError(
-                "Cannot explicitly pass 'agent' as the agent name. Use a different name or omit --agent to use the default."
-            )
-        return value
+    reset_parser.add_argument("--agent", required=True, help="Name of agent to reset")
+    reset_parser.add_argument("--target", dest="source_agent", help="Copy prompt from another agent")
     
     # Default interactive mode
     parser.add_argument(
         "--agent",
-        type=validate_agent_name,
-        default=None,
-        help="Agent identifier for separate memory stores (default: agent). Cannot explicitly pass 'agent'.",
+        default="agent",
+        help="Agent identifier for separate memory stores (default: agent).",
+    )
+    
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable long-term memory features (no agent.md or /memories/ access).",
     )
     
     return parser.parse_args()
 
 
-async def main(agent_name: str):
+async def main(agent_name: str, no_memory: bool):
     """Main entry point."""
+    # Error if both --agent and --no-memory are specified
+    if agent_name != "agent" and no_memory:
+        console.print("[bold red]Error:[/bold red] Cannot use --agent with --no-memory flag.")
+        console.print("Either specify --agent for memory-enabled mode, or use --no-memory for memory-disabled mode.")
+        return
+    
+    # Disable long-term memory if --no-memory flag is set
+    long_term_memory = not no_memory
+    
+    # If memory is disabled, set agent_name to None
+    effective_agent_name = None if no_memory else agent_name
+    
     # Create agent
     agent = create_deep_agent(
         tools=[http_request, web_search],
-        system_prompt=get_coding_instructions(agent_name),
+        system_prompt=get_coding_instructions(effective_agent_name, long_term_memory=long_term_memory),
         use_local_filesystem=True,
+        long_term_memory=long_term_memory,
     ).with_config(config)
     
     agent.checkpointer = InMemorySaver()
     
     try:
-        await simple_cli(agent, agent_name)
+        await simple_cli(agent, effective_agent_name)
     except KeyboardInterrupt:
         console.print("\n\n[bold cyan]👋 Goodbye![/bold cyan]\n")
     except Exception as e:
@@ -526,7 +563,15 @@ async def main(agent_name: str):
 def cli_main():
     """Entry point for console script."""
     args = parse_args()
-    asyncio.run(main(args.agent or "agent"))
+    
+    if args.command == "help":
+        show_help()
+    elif args.command == "list":
+        list_agents()
+    elif args.command == "reset":
+        reset_agent(args.agent, args.source_agent)
+    else:
+        asyncio.run(main(args.agent, args.no_memory))
 
 
 if __name__ == "__main__":

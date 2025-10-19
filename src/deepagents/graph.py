@@ -51,6 +51,7 @@ def create_deep_agent(
     store: BaseStore | None = None,
     use_longterm_memory: bool = False,
     use_local_filesystem: bool = False,
+    long_term_memory: bool = False,
     skills: list[dict[str, Any]] | None = None,
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
     debug: bool = False,
@@ -89,6 +90,8 @@ def create_deep_agent(
             When True, longterm memory is not supported and `use_longterm_memory` must be False.
             Skills are automatically discovered from ~/.deepagents/skills/ and ./.deepagents/skills/.
             The agent_name for memory storage can be passed via config: {"configurable": {"agent_name": "myagent"}}.
+        long_term_memory: If True, enables long-term memory features like agent.md persistence
+            and memories folder. Only applies when use_local_filesystem=True.
         skills: Optional list of SkillDefinition for virtual filesystem mode. Only valid when
             use_local_filesystem=False. Skills are loaded into /skills/<name>/ in virtual filesystem.
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
@@ -103,10 +106,6 @@ def create_deep_agent(
     if model is None:
         model = get_default_model()
 
-    # Validation
-    if use_local_filesystem and use_longterm_memory:
-        raise ValueError("Longterm memory is not supported when using the local filesystem. Set use_longterm_memory=False or disable use_local_filesystem.")
-    
     if use_local_filesystem and skills is not None:
         raise ValueError(
             "Cannot provide skill definitions with use_local_filesystem=True. "
@@ -121,7 +120,7 @@ def create_deep_agent(
                 workspace_root=os.getcwd(),
                 execution_policy=HostExecutionPolicy()
             )
-            return [LocalFilesystemMiddleware(), shell_middleware]
+            return [LocalFilesystemMiddleware(long_term_memory=long_term_memory), shell_middleware]
         return [FilesystemMiddleware(long_term_memory=use_longterm_memory, skills=skills)]
 
     deepagent_middleware = [

@@ -56,16 +56,29 @@ LOCAL_EDIT_FILE_TOOL_DESCRIPTION = EDIT_DESCRIPTION
 # Path Resolution Helper
 # -----------------------------
 
-def _resolve_path(path: str, cwd: str) -> str:
+def _resolve_path(path: str, cwd: str, long_term_memory: bool = False) -> str:
     """Resolve relative paths against CWD, leave absolute paths unchanged.
     
     Special handling: /memories/* paths are redirected to ~/.deepagents/<agent_name>/
-    agent_name is retrieved from the runtime config.
+    agent_name is retrieved from the runtime config. If agent_name is None, /memories
+    paths will return an error. This only works if long_term_memory=True.
     """
     if path.startswith("/memories"):
+        if not long_term_memory:
+            raise ValueError(
+                "Long-term memory is disabled. "
+                "/memories/ access requires long_term_memory=True."
+            )
+        
         # Get agent_name from config
         config = get_config()
-        agent_name = config.get("configurable", {}).get("agent_name", "agent") if config else "agent"
+        agent_name = config.get("configurable", {}).get("agent_name") if config else None
+        
+        if agent_name is None:
+            raise ValueError(
+                "Memory access is disabled when no agent name is provided. "
+                "To use /memories/, run with --agent <name> to enable memory features."
+            )
         
         agent_dir = pathlib.Path.home() / ".deepagents" / agent_name
         if path == "/memories":
@@ -83,11 +96,11 @@ def _resolve_path(path: str, cwd: str) -> str:
 # Tool Implementations (Local)
 # -----------------------------
 
-def _ls_impl(path: str = ".", cwd: str | None = None) -> list[str]:
+def _ls_impl(path: str = ".", cwd: str | None = None, long_term_memory: bool = False) -> list[str]:
     """List all files in the specified directory on disk."""
     try:
         if cwd:
-            path = _resolve_path(path, cwd)
+            path = _resolve_path(path, cwd, long_term_memory)
         path_obj = pathlib.Path(path)
         if not path_obj.exists():
             return [f"Error: Path '{path}' does not exist"]
@@ -107,11 +120,12 @@ def _read_file_impl(
     offset: int = 0,
     limit: int = 2000,
     cwd: str | None = None,
+    long_term_memory: bool = False,
 ) -> str:
     """Read a file from the local filesystem and return cat -n formatted content."""
     try:
         if cwd:
-            file_path = _resolve_path(file_path, cwd)
+            file_path = _resolve_path(file_path, cwd, long_term_memory)
         path_obj = pathlib.Path(file_path)
 
         if not path_obj.exists():
@@ -154,11 +168,12 @@ def _write_file_impl(
     file_path: str,
     content: str,
     cwd: str | None = None,
+    long_term_memory: bool = False,
 ) -> str:
     """Write content to a file on the local filesystem (creates parents)."""
     try:
         if cwd:
-            file_path = _resolve_path(file_path, cwd)
+            file_path = _resolve_path(file_path, cwd, long_term_memory)
         path_obj = pathlib.Path(file_path)
         path_obj.parent.mkdir(parents=True, exist_ok=True)
         with open(path_obj, "w", encoding="utf-8") as f:
@@ -174,11 +189,12 @@ def _edit_file_impl(
     new_string: str,
     replace_all: bool = False,
     cwd: str | None = None,
+    long_term_memory: bool = False,
 ) -> str:
     """Edit a file on disk by replacing old_string with new_string."""
     try:
         if cwd:
-            file_path = _resolve_path(file_path, cwd)
+            file_path = _resolve_path(file_path, cwd, long_term_memory)
         path_obj = pathlib.Path(file_path)
         if not path_obj.exists():
             return f"Error: File '{file_path}' not found"
@@ -228,11 +244,12 @@ def _glob_impl(
     include_dirs: bool = False,
     recursive: bool = True,
     cwd: str | None = None,
+    long_term_memory: bool = False,
 ) -> str:
     """Find files and directories using glob patterns on local filesystem."""
     try:
         if cwd:
-            path = _resolve_path(path, cwd)
+            path = _resolve_path(path, cwd, long_term_memory)
         path_obj = pathlib.Path(path)
         if not path_obj.exists():
             return f"Error: Path '{path}' does not exist"
@@ -278,6 +295,7 @@ def _grep_impl(
     context_lines: int = 0,
     regex: bool = False,
     cwd: str | None = None,
+    long_term_memory: bool = False,
 ) -> str:
     """Search for text patterns within files using ripgrep on local filesystem."""
     try:
@@ -287,11 +305,11 @@ def _grep_impl(
         if cwd:
             if files:
                 if isinstance(files, str):
-                    files = _resolve_path(files, cwd)
+                    files = _resolve_path(files, cwd, long_term_memory)
                 else:
-                    files = [_resolve_path(f, cwd) for f in files]
+                    files = [_resolve_path(f, cwd, long_term_memory) for f in files]
             if path:
-                path = _resolve_path(path, cwd)
+                path = _resolve_path(path, cwd, long_term_memory)
 
         cmd: list[str] = ["rg"]
         if regex:
@@ -359,7 +377,7 @@ STANDARD_SKILL_PATHS = [
 ]
 
 
-def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, cwd: str | None = None):
+def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, cwd: str | None = None, long_term_memory: bool = False):
     """Return tool instances for local filesystem operations.
     
     agent_name is retrieved from runtime config via get_config() when tools are called.
@@ -373,7 +391,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
     @tool(description=ls_description)
     def ls(path: str = ".") -> list[str]:  # noqa: D401 - simple wrapper
         """List all files in the specified directory."""
-        return _ls_impl(path, cwd=cwd)
+        return _ls_impl(path, cwd=cwd, long_term_memory=long_term_memory)
 
     read_desc = (
         (custom_tool_descriptions or {}).get("read_file", LOCAL_READ_FILE_TOOL_DESCRIPTION)
@@ -381,7 +399,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
 
     @tool(description=read_desc)
     def read_file(file_path: str, offset: int = 0, limit: int = 2000) -> str:
-        return _read_file_impl(file_path, offset, limit, cwd=cwd)
+        return _read_file_impl(file_path, offset, limit, cwd=cwd, long_term_memory=long_term_memory)
 
     write_desc = (
         (custom_tool_descriptions or {}).get("write_file", WRITE_DESCRIPTION)
@@ -389,7 +407,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
 
     @tool(description=write_desc)
     def write_file(file_path: str, content: str) -> str:
-        return _write_file_impl(file_path, content, cwd=cwd)
+        return _write_file_impl(file_path, content, cwd=cwd, long_term_memory=long_term_memory)
 
     edit_desc = (
         (custom_tool_descriptions or {}).get("edit_file", LOCAL_EDIT_FILE_TOOL_DESCRIPTION)
@@ -402,7 +420,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
         new_string: str,
         replace_all: bool = False,
     ) -> str:
-        return _edit_file_impl(file_path, old_string, new_string, replace_all, cwd=cwd)
+        return _edit_file_impl(file_path, old_string, new_string, replace_all, cwd=cwd, long_term_memory=long_term_memory)
 
     glob_desc = (
         (custom_tool_descriptions or {}).get("glob", GLOB_DESCRIPTION)
@@ -416,7 +434,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
         include_dirs: bool = False,
         recursive: bool = True,
     ) -> str:
-        return _glob_impl(pattern, path, max_results, include_dirs, recursive, cwd=cwd)
+        return _glob_impl(pattern, path, max_results, include_dirs, recursive, cwd=cwd, long_term_memory=long_term_memory)
 
     grep_desc = (
         (custom_tool_descriptions or {}).get("grep", GREP_DESCRIPTION)
@@ -443,6 +461,7 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
             context_lines=context_lines,
             regex=regex,
             cwd=cwd,
+            long_term_memory=long_term_memory,
         )
 
     return [ls, read_file, write_file, edit_file, glob, grep]
@@ -494,8 +513,10 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
         cwd: str | None = None,
+        long_term_memory: bool = False,
     ) -> None:
         self.cwd = cwd or os.getcwd()
+        self.long_term_memory = long_term_memory
         
         # Check if ripgrep is installed
         self._check_ripgrep_installed()
@@ -505,11 +526,17 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         
         # Build system prompt
         cwd_prompt = f"\n\nCurrent working directory: {self.cwd}\n\nWhen using filesystem tools (ls, read_file, write_file, edit_file, glob, grep), relative paths will be resolved relative to this directory."
+        
+        # Add long-term memory documentation if enabled
+        memory_prompt = ""
+        if long_term_memory:
+            memory_prompt = "\n\n## Long-term Memory\n\nYou can access long-term memory storage at /memories/. Files stored here persist across sessions and are saved to ~/.deepagents/<agent_name>/. You must use --agent <name> to enable this feature."
+        
         base_prompt = system_prompt or LOCAL_FILESYSTEM_SYSTEM_PROMPT
         skills_prompt = self._build_skills_prompt()
         
-        self.system_prompt = base_prompt + cwd_prompt + skills_prompt
-        self.tools = _get_local_filesystem_tools(custom_tool_descriptions, cwd=self.cwd)
+        self.system_prompt = base_prompt + cwd_prompt + memory_prompt + skills_prompt
+        self.tools = _get_local_filesystem_tools(custom_tool_descriptions, cwd=self.cwd, long_term_memory=long_term_memory)
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
     
     def _discover_skills(self) -> list[dict[str, str]]:
