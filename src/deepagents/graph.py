@@ -21,6 +21,7 @@ from langgraph.types import Checkpointer
 
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.local_filesystem import LocalFilesystemMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
@@ -137,6 +138,7 @@ def create_deep_agent(
                     messages_to_keep=6,
                 ),
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
+                                   PatchToolCallsMiddleware(),
             ] + _fs_middleware(),
             default_interrupt_on=interrupt_on,
             general_purpose_agent=True,
@@ -147,7 +149,8 @@ def create_deep_agent(
             messages_to_keep=6,
         ),
         AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
-    ] + _fs_middleware()
+        PatchToolCallsMiddleware(),
+    ]+ _fs_middleware()
     if interrupt_on is not None:
         deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
     if middleware is not None:
