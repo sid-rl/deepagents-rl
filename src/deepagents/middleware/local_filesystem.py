@@ -39,6 +39,7 @@ from deepagents.prompts import (
     GREP_DESCRIPTION,
     WRITE_DESCRIPTION,
     LONGTERM_MEMORY_SYSTEM_PROMPT,
+    DEFAULT_MEMORY,
 )
 
 LOCAL_LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the specified directory on disk.
@@ -682,8 +683,8 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         else:
             # Create empty agent.md
             agent_dir.mkdir(parents=True, exist_ok=True)
-            agent_md.write_text("")
-            agent_memory_content = ""
+            agent_memory_content = DEFAULT_MEMORY
+            agent_md.write_text(agent_memory_content)
         
         return {"agent_memory": agent_memory_content}
 

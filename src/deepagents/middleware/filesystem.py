@@ -28,7 +28,7 @@ from langgraph.store.base import BaseStore, Item
 from langgraph.types import Command
 from typing_extensions import TypedDict
 from deepagents.middleware.common import TOO_LARGE_TOOL_MSG
-from deepagents.prompts import EDIT_DESCRIPTION, TOOL_DESCRIPTION, LONGTERM_MEMORY_SYSTEM_PROMPT
+from deepagents.prompts import EDIT_DESCRIPTION, TOOL_DESCRIPTION, LONGTERM_MEMORY_SYSTEM_PROMPT, DEFAULT_MEMORY
 
 MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -1033,9 +1033,9 @@ class FilesystemMiddleware(AgentMiddleware):
                     agent_memory_content = _file_data_to_string(file_data)
                 else:
                     # Create empty agent.md in store
-                    empty_file_data = _create_file_data("")
+                    agent_memory_content = DEFAULT_MEMORY
+                    empty_file_data = _create_file_data(agent_memory_content)
                     store.put(namespace, agent_md_key, _convert_file_data_to_store_item(empty_file_data))
-                    agent_memory_content = ""
                 
                 state_update["agent_memory"] = agent_memory_content
         
