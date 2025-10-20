@@ -137,55 +137,14 @@ def web_search(
         }
 
 
-def get_default_coding_instructions(include_memory: bool = True) -> str:
+def get_default_coding_instructions() -> str:
     """Get the default coding agent instructions.
     
-    Args:
-        include_memory: If False, removes the Long-term Memory section from the prompt.
+    These are the immutable base instructions that cannot be modified by the agent.
+    Long-term memory (agent.md) is handled separately by the middleware.
     """
     default_prompt_path = Path(__file__).parent / "default_agent_prompt.md"
-    prompt = default_prompt_path.read_text()
-    
-    if not include_memory:
-        # Remove the Long-term Memory section
-        lines = prompt.split('\n')
-        result_lines = []
-        skip = False
-        
-        for line in lines:
-            if line.strip() == "## Long-term Memory":
-                skip = True
-                continue
-            if skip and line.startswith('##'):
-                skip = False
-            if not skip:
-                result_lines.append(line)
-        
-        prompt = '\n'.join(result_lines).rstrip() + '\n'
-    
-    return prompt
-
-
-def get_coding_instructions(agent_name: str | None, long_term_memory: bool = False) -> str:
-    """Get the coding agent instructions from file or create default.
-    
-    If agent_name is None or long_term_memory is False, returns default instructions without memory features.
-    """
-    if agent_name is None or not long_term_memory:
-        return get_default_coding_instructions(include_memory=False)
-    
-    agent_dir = Path.home() / ".deepagents" / agent_name
-    agent_prompt_file = agent_dir / "agent.md"
-    
-    if agent_prompt_file.exists():
-        agent_memory_content = agent_prompt_file.read_text()
-    else:
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        default_prompt = get_default_coding_instructions(include_memory=True)
-        agent_prompt_file.write_text(default_prompt)
-        agent_memory_content = default_prompt
-    
-    return f"<agent_memory>\n{agent_memory_content}\n</agent_memory>"
+    return default_prompt_path.read_text()
 
 
 config = {"recursion_limit": 1000}
@@ -273,11 +232,14 @@ def extract_and_display_content(message_content):
                     pass  # Don't display tool results
 
 
-def execute_task(user_input: str, agent, agent_name: str | None):
+def execute_task(user_input: str, agent, assistant_id: str | None):
     """Execute any task by passing it directly to the AI agent."""
     console.print()
     
-    config = {"configurable": {"thread_id": "main", "agent_name": agent_name}} if agent_name else {"configurable": {"thread_id": "main"}}
+    config = {
+        "configurable": {"thread_id": "main"},
+        "metadata": {"assistant_id": assistant_id} if assistant_id else {}
+    }
     
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
@@ -363,7 +325,7 @@ def execute_task(user_input: str, agent, agent_name: str | None):
     console.print()
 
 
-async def simple_cli(agent, agent_name: str | None):
+async def simple_cli(agent, assistant_id: str | None):
     """Main CLI loop."""
     console.print()
     console.print(Panel.fit(
@@ -397,7 +359,7 @@ async def simple_cli(agent, agent_name: str | None):
 
         else:
             console.print("[dim]✓ Command sent[/dim]")
-            execute_task(user_input, agent, agent_name)
+            execute_task(user_input, agent, assistant_id)
 
 
 def list_agents():
@@ -442,8 +404,9 @@ def reset_agent(agent_name: str, source_agent: str = None):
         source_content = source_md.read_text()
         action_desc = f"contents of agent '{source_agent}'"
     else:
-        source_content = get_default_coding_instructions()
-        action_desc = "default prompt"
+        # Reset to empty - agent builds their own memory
+        source_content = ""
+        action_desc = "empty (agent will build their own memory)"
     
     if agent_dir.exists():
         shutil.rmtree(agent_dir)
@@ -545,17 +508,18 @@ async def main(agent_name: str, no_memory: bool):
     # Disable long-term memory if --no-memory flag is set
     long_term_memory = not no_memory
     
-    # If memory is disabled, set agent_name to None
-    effective_agent_name = None if no_memory else agent_name
+    # If memory is disabled, set assistant_id to None
+    assistant_id = None if no_memory else agent_name
     
     # Create agent with conditional tools
     tools = [http_request]
     if tavily_client is not None:
         tools.append(web_search)
     
+    # Always use default instructions - middleware handles agent.md loading
     agent = create_deep_agent(
         tools=tools,
-        system_prompt=get_coding_instructions(effective_agent_name, long_term_memory=long_term_memory),
+        system_prompt=get_default_coding_instructions(),
         use_local_filesystem=True,
         long_term_memory=long_term_memory,
     ).with_config(config)
@@ -563,7 +527,7 @@ async def main(agent_name: str, no_memory: bool):
     agent.checkpointer = InMemorySaver()
     
     try:
-        await simple_cli(agent, effective_agent_name)
+        await simple_cli(agent, assistant_id)
     except KeyboardInterrupt:
         console.print("\n\n[bold cyan]👋 Goodbye![/bold cyan]\n")
     except Exception as e:

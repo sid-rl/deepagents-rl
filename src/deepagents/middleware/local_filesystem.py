@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional, Union
+from typing_extensions import NotRequired
 
 import os
 import pathlib
@@ -59,9 +60,9 @@ LOCAL_EDIT_FILE_TOOL_DESCRIPTION = EDIT_DESCRIPTION
 def _resolve_path(path: str, cwd: str, long_term_memory: bool = False) -> str:
     """Resolve relative paths against CWD, leave absolute paths unchanged.
     
-    Special handling: /memories/* paths are redirected to ~/.deepagents/<agent_name>/
-    agent_name is retrieved from the runtime config. If agent_name is None, /memories
-    paths will return an error. This only works if long_term_memory=True.
+    Special handling: /memories/* paths are redirected to ~/.deepagents/<assistant_id>/
+    assistant_id is retrieved from the runtime config metadata. If assistant_id is None, 
+    /memories paths will return an error. This only works if long_term_memory=True.
     """
     if path.startswith("/memories"):
         if not long_term_memory:
@@ -70,17 +71,17 @@ def _resolve_path(path: str, cwd: str, long_term_memory: bool = False) -> str:
                 "/memories/ access requires long_term_memory=True."
             )
         
-        # Get agent_name from config
+        # Get assistant_id from config metadata
         config = get_config()
-        agent_name = config.get("configurable", {}).get("agent_name") if config else None
+        assistant_id = config.get("metadata", {}).get("assistant_id") if config else None
         
-        if agent_name is None:
+        if assistant_id is None:
             raise ValueError(
-                "Memory access is disabled when no agent name is provided. "
-                "To use /memories/, run with --agent <name> to enable memory features."
+                "Memory access is disabled when no assistant_id is provided. "
+                "To use /memories/, pass assistant_id in config metadata."
             )
         
-        agent_dir = pathlib.Path.home() / ".deepagents" / agent_name
+        agent_dir = pathlib.Path.home() / ".deepagents" / assistant_id
         if path == "/memories":
             return str(agent_dir)
         else:
@@ -467,6 +468,13 @@ def _get_local_filesystem_tools(custom_tool_descriptions: dict[str, str] | None 
     return [ls, read_file, write_file, edit_file, glob, grep]
 
 
+class LocalFilesystemState(FilesystemState):
+    """Extended filesystem state with agent memory support."""
+    
+    agent_memory: NotRequired[str]
+    """Content of agent.md file for long-term memory."""
+
+
 class LocalFilesystemMiddleware(AgentMiddleware):
     """Middleware that injects local filesystem tools into an agent.
 
@@ -483,7 +491,7 @@ class LocalFilesystemMiddleware(AgentMiddleware):
     - ./.deepagents/skills/ (project skills)
     """
 
-    state_schema = FilesystemState
+    state_schema = LocalFilesystemState
 
     def _check_ripgrep_installed(self) -> None:
         """Check if ripgrep (rg) is installed on the system.
@@ -530,7 +538,38 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         # Add long-term memory documentation if enabled
         memory_prompt = ""
         if long_term_memory:
-            memory_prompt = "\n\n## Long-term Memory\n\nYou can access long-term memory storage at /memories/. Files stored here persist across sessions and are saved to ~/.deepagents/<agent_name>/. You must use --agent <name> to enable this feature."
+            memory_prompt = """
+
+## Long-term Memory
+
+You have access to a long-term memory system using the `/memories/` path prefix.
+Files stored in `/memories/` persist across sessions and are stored in ~/.deepagents/<assistant_id>/.
+
+Your system prompt is loaded from `/memories/agent.md` at startup. You can update your own instructions by editing this file.
+
+**When to update memories:**
+- **IMMEDIATELY when the user describes your role or how you should behave** (e.g., "you are a web researcher", "you are an expert in X")
+- **IMMEDIATELY when the user gives feedback on your work** - Before continuing, update memories to capture what was wrong and how to do it better
+- When the user explicitly asks you to remember something
+- When patterns or preferences emerge (coding styles, conventions, workflows)
+- After significant work where context would help in future sessions
+
+**Learning from feedback:**
+- When user says something is better/worse, capture WHY and encode it as a pattern
+- Each correction is a chance to improve permanently - don't just fix the immediate issue, update your instructions
+- When user says "you should remember X" or "be careful about Y", treat this as HIGH PRIORITY - update memories IMMEDIATELY
+- Look for the underlying principle behind corrections, not just the specific mistake
+- If it's something you "should have remembered", identify where that instruction should live permanently
+
+**What to store where:**
+- **`/memories/agent.md`**: Update this to modify your core instructions and behavioral patterns
+- **Other `/memories/` files**: Use for project-specific context, reference information, or structured notes
+  - If you create additional memory files, add references to them in `/memories/agent.md` so you remember to consult them
+
+The portion of your system prompt that comes from `/memories/agent.md` is marked with `<agent_memory>` tags so you can identify what instructions come from your persistent memory.
+
+Example: `edit_file('/memories/agent.md', ...)` to update your instructions
+Example: `write_file('/memories/project_context.md', ...)` for project-specific notes, then reference it in agent.md"""
         
         base_prompt = system_prompt or LOCAL_FILESYSTEM_SYSTEM_PROMPT
         skills_prompt = self._build_skills_prompt()
@@ -638,17 +677,72 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         
         return prompt
 
+    def before_agent(self, state, runtime) -> dict[str, Any] | None:
+        """Load agent.md from disk at the beginning of agent execution.
+        
+        This runs once when the agent starts, loading the agent's memory
+        from ~/.deepagents/<assistant_id>/agent.md and storing it in state.
+        If agent_memory is already in state (from a previous run), skip loading.
+        
+        Args:
+            state: The agent state.
+            runtime: The LangGraph runtime.
+            
+        Returns:
+            State update with agent_memory loaded, or None if disabled/no assistant_id/already loaded.
+        """
+        if not self.long_term_memory:
+            return None
+        
+        # Check if already loaded from a previous run
+        if "agent_memory" in state:
+            return None
+        
+        config = get_config()
+        assistant_id = config.get("metadata", {}).get("assistant_id") if config else None
+        
+        if assistant_id is None:
+            return None
+        
+        agent_dir = pathlib.Path.home() / ".deepagents" / assistant_id
+        agent_md = agent_dir / "agent.md"
+        
+        if agent_md.exists():
+            agent_memory_content = agent_md.read_text()
+        else:
+            # Create empty agent.md
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            agent_md.write_text("")
+            agent_memory_content = ""
+        
+        return {"agent_memory": agent_memory_content}
+
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
+        # Build final system prompt
+        final_prompt = ""
+        
+        # Add agent memory if available in state
+        if self.long_term_memory:
+            agent_memory_content = request.state.get("agent_memory", "")
+            if agent_memory_content:
+                final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+        
+        # Add middleware system prompt
         if self.system_prompt is not None:
+            final_prompt += self.system_prompt
+        
+        # Prepend to request system prompt
+        if final_prompt:
             request.system_prompt = (
-                request.system_prompt + "\n\n" + self.system_prompt
+                final_prompt + "\n\n" + request.system_prompt
                 if request.system_prompt
-                else self.system_prompt
+                else final_prompt
             )
+        
         return handler(request)
 
     async def awrap_model_call(
@@ -656,12 +750,27 @@ class LocalFilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
+        # Build final system prompt
+        final_prompt = ""
+        
+        # Add agent memory if available in state
+        if self.long_term_memory:
+            agent_memory_content = request.state.get("agent_memory", "")
+            if agent_memory_content:
+                final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+        
+        # Add middleware system prompt
         if self.system_prompt is not None:
+            final_prompt += self.system_prompt
+        
+        # Prepend to request system prompt
+        if final_prompt:
             request.system_prompt = (
-                request.system_prompt + "\n\n" + self.system_prompt
+                final_prompt + "\n\n" + request.system_prompt
                 if request.system_prompt
-                else self.system_prompt
+                else final_prompt
             )
+        
         return await handler(request)
 
     # --------- Token-eviction to filesystem state (like FilesystemMiddleware) ---------
