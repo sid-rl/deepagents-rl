@@ -28,7 +28,7 @@ from langgraph.store.base import BaseStore, Item
 from langgraph.types import Command
 from typing_extensions import TypedDict
 from deepagents.middleware.common import TOO_LARGE_TOOL_MSG
-from deepagents.prompts import EDIT_DESCRIPTION, TOOL_DESCRIPTION
+from deepagents.prompts import EDIT_DESCRIPTION, TOOL_DESCRIPTION, LONGTERM_MEMORY_SYSTEM_PROMPT
 
 MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -402,40 +402,7 @@ All file paths must start with a /.
 - read_file: read a file from the filesystem
 - write_file: write to a file in the filesystem
 - edit_file: edit a file in the filesystem"""
-FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
-
-## Long-term Memory
-
-You have access to a long-term memory system using the {MEMORIES_PREFIX} path prefix.
-Files stored with {MEMORIES_PREFIX} persist across sessions and conversations in a permanent store.
-
-Your system prompt is loaded from {MEMORIES_PREFIX}agent.md at startup. You can update your own instructions by editing this file.
-
-**When to update memories:**
-- **IMMEDIATELY when the user describes your role or how you should behave** (e.g., "you are a web researcher", "you are an expert in X")
-- **IMMEDIATELY when the user gives feedback on your work** - Before continuing, update memories to capture what was wrong and how to do it better
-- When the user explicitly asks you to remember something
-- When patterns or preferences emerge (coding styles, conventions, workflows)
-- After significant work where context would help in future sessions
-
-**Learning from feedback:**
-- When user says something is better/worse, capture WHY and encode it as a pattern
-- Each correction is a chance to improve permanently - don't just fix the immediate issue, update your instructions
-- When user says "you should remember X" or "be careful about Y", treat this as HIGH PRIORITY - update memories IMMEDIATELY
-- Look for the underlying principle behind corrections, not just the specific mistake
-- If it's something you "should have remembered", identify where that instruction should live permanently
-
-**What to store where:**
-- **{MEMORIES_PREFIX}agent.md**: Update this to modify your core instructions and behavioral patterns
-- **Other {MEMORIES_PREFIX} files**: Use for project-specific context, reference information, or structured notes
-  - If you create additional memory files, add references to them in {MEMORIES_PREFIX}agent.md so you remember to consult them
-
-The portion of your system prompt that comes from {MEMORIES_PREFIX}agent.md is marked with `<agent_memory>` tags so you can identify what instructions come from your persistent memory.
-
-Example: `edit_file('{MEMORIES_PREFIX}agent.md', ...)` to update your instructions
-Example: `write_file('{MEMORIES_PREFIX}project_context.md', ...)` for project-specific notes, then reference it in agent.md
-
-Remember: To interact with the longterm filesystem, you must prefix the filename with the {MEMORIES_PREFIX} path."""
+FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = LONGTERM_MEMORY_SYSTEM_PROMPT.format(memory_path=MEMORIES_PREFIX)
 
 
 def _get_namespace() -> tuple[str] | tuple[str, str]:
