@@ -388,9 +388,8 @@ async def simple_cli(agent, agent_name: str | None):
             console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
             break
 
-
-
         else:
+            console.print("[dim]✓ Command sent[/dim]")
             execute_task(user_input, agent, agent_name)
 
 
