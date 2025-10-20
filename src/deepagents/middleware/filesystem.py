@@ -359,6 +359,9 @@ class FilesystemState(AgentState):
 
     files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]
     """Files in the filesystem."""
+    
+    agent_memory: NotRequired[str]
+    """Content of /memories/agent.md for long-term memory."""
 
 
 LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the filesystem, optionally filtering by directory.
@@ -401,9 +404,38 @@ All file paths must start with a /.
 - edit_file: edit a file in the filesystem"""
 FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
 
-You also have access to a longterm filesystem in which you can store files that you want to keep around for longer than the current conversation.
-In order to interact with the longterm filesystem, you can use those same tools, but filenames must be prefixed with the {MEMORIES_PREFIX} path.
-Remember, to interact with the longterm filesystem, you must prefix the filename with the {MEMORIES_PREFIX} path."""
+## Long-term Memory
+
+You have access to a long-term memory system using the {MEMORIES_PREFIX} path prefix.
+Files stored with {MEMORIES_PREFIX} persist across sessions and conversations in a permanent store.
+
+Your system prompt is loaded from {MEMORIES_PREFIX}agent.md at startup. You can update your own instructions by editing this file.
+
+**When to update memories:**
+- **IMMEDIATELY when the user describes your role or how you should behave** (e.g., "you are a web researcher", "you are an expert in X")
+- **IMMEDIATELY when the user gives feedback on your work** - Before continuing, update memories to capture what was wrong and how to do it better
+- When the user explicitly asks you to remember something
+- When patterns or preferences emerge (coding styles, conventions, workflows)
+- After significant work where context would help in future sessions
+
+**Learning from feedback:**
+- When user says something is better/worse, capture WHY and encode it as a pattern
+- Each correction is a chance to improve permanently - don't just fix the immediate issue, update your instructions
+- When user says "you should remember X" or "be careful about Y", treat this as HIGH PRIORITY - update memories IMMEDIATELY
+- Look for the underlying principle behind corrections, not just the specific mistake
+- If it's something you "should have remembered", identify where that instruction should live permanently
+
+**What to store where:**
+- **{MEMORIES_PREFIX}agent.md**: Update this to modify your core instructions and behavioral patterns
+- **Other {MEMORIES_PREFIX} files**: Use for project-specific context, reference information, or structured notes
+  - If you create additional memory files, add references to them in {MEMORIES_PREFIX}agent.md so you remember to consult them
+
+The portion of your system prompt that comes from {MEMORIES_PREFIX}agent.md is marked with `<agent_memory>` tags so you can identify what instructions come from your persistent memory.
+
+Example: `edit_file('{MEMORIES_PREFIX}agent.md', ...)` to update your instructions
+Example: `write_file('{MEMORIES_PREFIX}project_context.md', ...)` for project-specific notes, then reference it in agent.md
+
+Remember: To interact with the longterm filesystem, you must prefix the filename with the {MEMORIES_PREFIX} path."""
 
 
 def _get_namespace() -> tuple[str] | tuple[str, str]:
@@ -996,14 +1028,14 @@ class FilesystemMiddleware(AgentMiddleware):
         return prompt
     
     def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        """Load skills into virtual filesystem and validate store if needed.
+        """Load skills into virtual filesystem and agent memory from store if needed.
         
         Args:
             state: The state of the agent.
             runtime: The LangGraph runtime.
 
         Returns:
-            State update with skills loaded into filesystem, or None if no skills.
+            State update with skills loaded and/or agent_memory loaded, or None if nothing to load.
 
         Raises:
             ValueError: If long_term_memory is True but runtime.store is None.
@@ -1012,21 +1044,49 @@ class FilesystemMiddleware(AgentMiddleware):
             msg = "Longterm memory is enabled, but no store is available"
             raise ValueError(msg)
         
-        # Load skills into virtual filesystem
-        if not self.skills:
-            return None
+        state_update = {}
         
-        files_update = {}
-        for skill in self.skills:
-            skill_name = skill['name']
-            skill_files = skill.get('files', {})
+        # Load agent.md from store if long_term_memory is enabled
+        if self.long_term_memory and "agent_memory" not in state:
+            config = get_config()
+            assistant_id = config.get("metadata", {}).get("assistant_id") if config else None
             
-            for file_path, content in skill_files.items():
-                # Write to /skills/<skill_name>/<file_path>
-                full_path = f"/skills/{skill_name}/{file_path}"
-                files_update[full_path] = _create_file_data(content)
+            if assistant_id is not None:
+                store = _get_store(runtime)
+                namespace = _get_namespace()
+                
+                # Load /memories/agent.md from store
+                # Strip the /memories/ prefix to get the key
+                agent_md_key = _strip_memories_prefix("/memories/agent.md")
+                item = store.get(namespace, agent_md_key)
+                
+                if item is not None:
+                    # Extract content from store item
+                    file_data = _convert_store_item_to_file_data(item)
+                    agent_memory_content = _file_data_to_string(file_data)
+                else:
+                    # Create empty agent.md in store
+                    empty_file_data = _create_file_data("")
+                    store.put(namespace, agent_md_key, _convert_file_data_to_store_item(empty_file_data))
+                    agent_memory_content = ""
+                
+                state_update["agent_memory"] = agent_memory_content
         
-        return {"files": files_update}
+        # Load skills into virtual filesystem
+        if self.skills:
+            files_update = {}
+            for skill in self.skills:
+                skill_name = skill['name']
+                skill_files = skill.get('files', {})
+                
+                for file_path, content in skill_files.items():
+                    # Write to /skills/<skill_name>/<file_path>
+                    full_path = f"/skills/{skill_name}/{file_path}"
+                    files_update[full_path] = _create_file_data(content)
+            
+            state_update["files"] = files_update
+        
+        return state_update if state_update else None
 
 
 
@@ -1035,7 +1095,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        """Update the system prompt to include instructions on using the filesystem.
+        """Update the system prompt to include agent memory and filesystem instructions.
 
         Args:
             request: The model request being processed.
@@ -1044,8 +1104,26 @@ class FilesystemMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
+        final_prompt = ""
+        
+        # Add agent memory if available in state
+        if self.long_term_memory:
+            agent_memory_content = request.state.get("agent_memory", "")
+            if agent_memory_content:
+                final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+        
+        # Add middleware system prompt
         if self.system_prompt is not None:
-            request.system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
+            final_prompt += self.system_prompt
+        
+        # Prepend to request system prompt
+        if final_prompt:
+            request.system_prompt = (
+                final_prompt + "\n\n" + request.system_prompt
+                if request.system_prompt
+                else final_prompt
+            )
+        
         return handler(request)
 
     async def awrap_model_call(
@@ -1053,7 +1131,7 @@ class FilesystemMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """(async) Update the system prompt to include instructions on using the filesystem.
+        """(async) Update the system prompt to include agent memory and filesystem instructions.
 
         Args:
             request: The model request being processed.
@@ -1062,8 +1140,26 @@ class FilesystemMiddleware(AgentMiddleware):
         Returns:
             The model response from the handler.
         """
+        final_prompt = ""
+        
+        # Add agent memory if available in state
+        if self.long_term_memory:
+            agent_memory_content = request.state.get("agent_memory", "")
+            if agent_memory_content:
+                final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+        
+        # Add middleware system prompt
         if self.system_prompt is not None:
-            request.system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
+            final_prompt += self.system_prompt
+        
+        # Prepend to request system prompt
+        if final_prompt:
+            request.system_prompt = (
+                final_prompt + "\n\n" + request.system_prompt
+                if request.system_prompt
+                else final_prompt
+            )
+        
         return await handler(request)
 
     def _intercept_large_tool_result(self, tool_result: ToolMessage | Command) -> ToolMessage | Command:
