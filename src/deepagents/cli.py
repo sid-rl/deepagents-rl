@@ -372,6 +372,13 @@ async def simple_cli(agent, agent_name: str | None):
         box=box.DOUBLE
     ))
     console.print("[dim]Type 'quit' to exit[/dim]")
+    
+    if tavily_client is None:
+        console.print("[yellow]⚠ Web search disabled:[/yellow] TAVILY_API_KEY not found.")
+        console.print("[dim]  To enable web search, set your Tavily API key:[/dim]")
+        console.print("[dim]    export TAVILY_API_KEY=your_api_key_here[/dim]")
+        console.print("[dim]  Or add it to your .env file. Get your key at: https://tavily.com[/dim]")
+    
     console.print()
 
     while True:
