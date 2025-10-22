@@ -1,6 +1,5 @@
-"""FilesystemBackend: Store files as JSON on disk."""
+"""FilesystemBackend: Read and write files directly from the filesystem."""
 
-import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -8,171 +7,125 @@ from typing import Any, Optional
 
 
 class FilesystemBackend:
-    """Backend that stores files as JSON on disk.
-    
-    Each file is stored as a JSON file containing the FileData structure:
-    {
-        "content": ["line1", "line2", ...],
-        "created_at": "2024-01-01T00:00:00Z",
-        "modified_at": "2024-01-01T00:00:00Z"
-    }
-    
-    Files are organized in a directory structure that mirrors the virtual
-    file paths. Optional agent_id parameter provides multi-agent isolation
-    by creating separate subdirectories per agent.
+    """Backend that reads and writes files directly from the filesystem.
+
+    Files are accessed using their actual filesystem paths. Relative paths are
+    resolved relative to the current working directory. Content is read/written
+    as plain text, and metadata (timestamps) are derived from filesystem stats.
     """
-    
-    def __init__(self, base_dir: str, agent_id: Optional[str] = None) -> None:
-        """Initialize filesystem backend.
-        
-        Args:
-            base_dir: Base directory for storing files.
-            agent_id: Optional agent ID for isolation. If provided, files are
-                     stored in base_dir/agent_id/ subdirectory.
-        """
-        self.base_dir = Path(base_dir)
-        self.agent_id = agent_id
-        
-        # Create base directory structure
-        if agent_id:
-            self.root_dir = self.base_dir / agent_id
-        else:
-            self.root_dir = self.base_dir
-        
-        self.root_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    def __init__(self) -> None:
+        """Initialize filesystem backend."""
+        self.cwd = Path.cwd()
+
     @property
     def uses_state(self) -> bool:
         """False for FilesystemBackend - stores directly to disk."""
         return False
-    
-    def _key_to_path(self, key: str) -> Path:
-        """Convert virtual path to actual filesystem path.
-        
+
+    def _resolve_path(self, key: str) -> Path:
+        """Resolve a file path relative to cwd if not absolute.
+
         Args:
-            key: Virtual file path (e.g., "/notes.txt" or "/subdir/file.txt")
-        
+            key: File path (absolute or relative)
+
         Returns:
-            Actual filesystem path where data is stored.
+            Resolved absolute Path object
         """
-        # Remove leading slash and convert to path
-        rel_path = key.lstrip("/")
-        if not rel_path:
-            rel_path = "root"
-        
-        # Add .json extension
-        return self.root_dir / f"{rel_path}.json"
-    
-    def _path_to_key(self, path: Path) -> str:
-        """Convert filesystem path back to virtual path.
-        
-        Args:
-            path: Filesystem path
-        
-        Returns:
-            Virtual file path (e.g., "/notes.txt")
-        """
-        # Get relative path from root_dir
-        rel_path = path.relative_to(self.root_dir)
-        
-        # Remove .json extension
-        path_str = str(rel_path)
-        if path_str.endswith(".json"):
-            path_str = path_str[:-5]
-        
-        # Handle root case
-        if path_str == "root":
-            return "/"
-        
-        # Add leading slash
-        return f"/{path_str}"
-    
+        path = Path(key)
+        if path.is_absolute():
+            return path
+        return self.cwd / path
+
     def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Get file from filesystem.
-        
+        """Read file from filesystem.
+
         Args:
-            key: File path (e.g., "/notes.txt")
-        
+            key: File path (absolute or relative to cwd, e.g., "notes.txt" or "/home/user/notes.txt")
+
         Returns:
-            FileData dict or None if not found.
+            FileData dict with content (list of lines) and timestamps, or None if not found.
         """
-        file_path = self._key_to_path(key)
-        
-        if not file_path.exists():
+        file_path = self._resolve_path(key)
+
+        if not file_path.exists() or not file_path.is_file():
             return None
-        
+
         try:
+            # Read content as lines
             with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            # Validate structure
-            if not isinstance(data, dict):
-                return None
-            if "content" not in data or not isinstance(data["content"], list):
-                return None
-            if "created_at" not in data or not isinstance(data["created_at"], str):
-                return None
-            if "modified_at" not in data or not isinstance(data["modified_at"], str):
-                return None
-            
-            return data
-        except (json.JSONDecodeError, OSError):
+                content = f.read().splitlines()
+
+            # Get timestamps from filesystem
+            stat = file_path.stat()
+            created_at = datetime.fromtimestamp(stat.st_ctime).isoformat() + "Z"
+            modified_at = datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z"
+
+            return {
+                "content": content,
+                "created_at": created_at,
+                "modified_at": modified_at,
+            }
+        except (OSError, UnicodeDecodeError):
             return None
-    
+
     def put(self, key: str, value: dict[str, Any]) -> None:
-        """Store file to filesystem.
-        
+        """Write file to filesystem.
+
         Args:
-            key: File path (e.g., "/notes.txt")
-            value: FileData dict
+            key: File path (absolute or relative to cwd, e.g., "notes.txt" or "/home/user/notes.txt")
+            value: FileData dict with "content" (list of lines)
         """
-        file_path = self._key_to_path(key)
-        
+        file_path = self._resolve_path(key)
+
         # Create parent directories if needed
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write JSON
+
+        # Write content (join lines with newlines)
+        content = value.get("content", [])
+        text = "\n".join(content)
+
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(value, f, indent=2, ensure_ascii=False)
-    
+            f.write(text)
+
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from filesystem.
-        
+
         Args:
-            prefix: Optional path prefix to filter results.
-        
+            prefix: Optional directory path to list files from (absolute or relative to cwd).
+                   Defaults to current working directory if not provided.
+
         Returns:
-            List of file paths.
+            List of absolute file paths.
         """
+        if prefix is None:
+            # Default to current working directory
+            dir_path = self.cwd
+        else:
+            dir_path = self._resolve_path(prefix)
+
+        if not dir_path.exists() or not dir_path.is_dir():
+            return []
+
         results: list[str] = []
-        
+
         # Walk the directory tree
-        for path in self.root_dir.rglob("*.json"):
-            if path.is_file():
-                key = self._path_to_key(path)
-                
-                # Filter by prefix if provided
-                if prefix is None or key.startswith(prefix):
-                    results.append(key)
-        
+        try:
+            for path in dir_path.rglob("*"):
+                if path.is_file():
+                    results.append(str(path))
+        except (OSError, PermissionError):
+            pass
+
         return sorted(results)
-    
+
     def delete(self, key: str) -> None:
         """Delete file from filesystem.
-        
+
         Args:
-            key: File path to delete
+            key: File path to delete (absolute or relative to cwd)
         """
-        file_path = self._key_to_path(key)
-        
-        if file_path.exists():
+        file_path = self._resolve_path(key)
+
+        if file_path.exists() and file_path.is_file():
             file_path.unlink()
-            
-            # Clean up empty parent directories
-            try:
-                parent = file_path.parent
-                while parent != self.root_dir and not any(parent.iterdir()):
-                    parent.rmdir()
-                    parent = parent.parent
-            except OSError:
-                pass  # Ignore errors during cleanup

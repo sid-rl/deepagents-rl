@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from langchain.tools import get_runtime
+from langgraph.runtime import get_runtime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
