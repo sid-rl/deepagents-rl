@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from langchain.tools import ToolRuntime
+from langchain.tools import get_runtime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
@@ -19,14 +19,6 @@ class StateBackend:
     This is indicated by the uses_state=True flag.
     """
     
-    def __init__(self, runtime: ToolRuntime) -> None:
-        """Initialize with runtime to access state.
-        
-        Args:
-            runtime: ToolRuntime providing access to agent state.
-        """
-        self.runtime = runtime
-    
     @property
     def uses_state(self) -> bool:
         """Always True for StateBackend - must return Commands for writes."""
@@ -41,7 +33,8 @@ class StateBackend:
         Returns:
             FileData dict or None if not found.
         """
-        files = self.runtime.state.get("files", {})
+        runtime = get_runtime()
+        files = runtime.state.get("files", {})
         return files.get(key)
     
     def put(self, key: str, value: dict[str, Any]) -> Command:
@@ -57,7 +50,8 @@ class StateBackend:
         Returns:
             Command object to update state.
         """
-        tool_call_id = self.runtime.tool_call_id
+        runtime = get_runtime()
+        tool_call_id = runtime.tool_call_id
         return Command(
             update={
                 "files": {key: value},
@@ -79,7 +73,8 @@ class StateBackend:
         Returns:
             List of file paths.
         """
-        files = self.runtime.state.get("files", {})
+        runtime = get_runtime()
+        files = runtime.state.get("files", {})
         keys = list(files.keys())
         
         if prefix is not None:
@@ -96,10 +91,11 @@ class StateBackend:
         Returns:
             Command object to update state (sets file to None for deletion).
         """
-        tool_call_id = self.runtime.tool_call_id
+        runtime = get_runtime()
+        tool_call_id = runtime.tool_call_id
         return Command(
             update={
-                "files": {key: None},  # None signals deletion in reducer
+                "files": {key: None},
                 "messages": [
                     ToolMessage(
                         content=f"Deleted file {key}",

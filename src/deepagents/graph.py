@@ -48,8 +48,8 @@ def create_deep_agent(
     context_schema: type[Any] | None = None,
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
-    use_longterm_memory: bool = False,
     memory_backend: MemoryBackend | None = None,
+    long_term_backend: MemoryBackend | None = None,
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
     debug: bool = False,
     name: str | None = None,
@@ -80,11 +80,11 @@ def create_deep_agent(
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persisting longterm memories. (Deprecated: use memory_backend instead)
-        use_longterm_memory: Whether to use longterm memory - you must provide a store
-            in order to use longterm memory. (Deprecated: use memory_backend instead)
-        memory_backend: Optional pluggable memory backend for file storage. If provided,
-            overrides store and use_longterm_memory parameters.
+        store: Optional store for persisting longterm memories.
+        memory_backend: Optional pluggable memory backend for file storage. Takes full control
+            of filesystem storage.
+        long_term_backend: Optional backend for /memories/ files. Creates composite backend
+            with StateBackend as default.
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
             interrupt configs.
         debug: Whether to enable debug mode. Passed through to create_agent.
@@ -97,14 +97,12 @@ def create_deep_agent(
     if model is None:
         model = get_default_model()
 
-    # Handle memory backend configuration
-    # Priority: memory_backend > use_longterm_memory (backward compat)
+    # Build filesystem middleware kwargs
     filesystem_kwargs = {}
     if memory_backend is not None:
         filesystem_kwargs["backend"] = memory_backend
-    elif use_longterm_memory:
-        # Backward compatibility: use_longterm_memory=True creates Store-backed long-term memory
-        filesystem_kwargs["long_term_memory"] = True
+    elif long_term_backend is not None:
+        filesystem_kwargs["long_term_backend"] = long_term_backend
 
     deepagent_middleware = [
         TodoListMiddleware(),
