@@ -29,6 +29,7 @@ from langgraph.types import Command
 from typing_extensions import TypedDict
 from deepagents.middleware.common import TOO_LARGE_TOOL_MSG
 from deepagents.prompts import EDIT_DESCRIPTION, TOOL_DESCRIPTION, LONGTERM_MEMORY_SYSTEM_PROMPT, DEFAULT_MEMORY
+from deepagents.memory import MemoryBackend, StoreBackend
 
 MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -425,54 +426,40 @@ def _get_namespace() -> tuple[str] | tuple[str, str]:
     return (assistant_id, "filesystem")
 
 
-def _get_store(runtime: ToolRuntime[None, FilesystemState]) -> BaseStore:
-    """Get the store from the runtime, raising an error if unavailable.
+def _get_memory_backend(
+    memory_backend: MemoryBackend | None,
+    runtime: Any  # Can be either ToolRuntime or Runtime
+) -> MemoryBackend:
+    """Get the memory backend, with fallback to runtime.store.
 
     Args:
-        runtime: The LangGraph runtime containing the store.
+        memory_backend: Optional pre-configured memory backend from middleware.
+        runtime: The LangGraph runtime (ToolRuntime or Runtime) potentially containing a store.
 
     Returns:
-        The BaseStore instance for longterm file storage.
+        A MemoryBackend instance for longterm file storage.
 
     Raises:
-        ValueError: If longterm memory is enabled but no store is available in runtime.
+        ValueError: If longterm memory is enabled but no backend or store is available.
     """
-    if runtime.store is None:
-        msg = "Longterm memory is enabled, but no store is available"
+    # Use provided backend if available
+    if memory_backend is not None:
+        return memory_backend
+    
+    # Fallback to runtime.store wrapped in adapter
+    if not hasattr(runtime, 'store') or runtime.store is None:
+        msg = "Longterm memory is enabled, but no memory backend or store is available"
         raise ValueError(msg)
-    return runtime.store
+    
+    # Get agent_id from config for multi-tenancy
+    config = get_config()
+    agent_id = config.get("metadata", {}).get("assistant_id") if config else None
+    
+    return StoreBackend(runtime.store, agent_id=agent_id)
 
 
-def _convert_store_item_to_file_data(store_item: Item) -> FileData:
-    """Convert a store Item to FileData format.
-
-    Args:
-        store_item: The store Item containing file data.
-
-    Returns:
-        FileData with content, created_at, and modified_at fields.
-
-    Raises:
-        ValueError: If required fields are missing or have incorrect types.
-    """
-    if "content" not in store_item.value or not isinstance(store_item.value["content"], list):
-        msg = f"Store item does not contain valid content field. Got: {store_item.value.keys()}"
-        raise ValueError(msg)
-    if "created_at" not in store_item.value or not isinstance(store_item.value["created_at"], str):
-        msg = f"Store item does not contain valid created_at field. Got: {store_item.value.keys()}"
-        raise ValueError(msg)
-    if "modified_at" not in store_item.value or not isinstance(store_item.value["modified_at"], str):
-        msg = f"Store item does not contain valid modified_at field. Got: {store_item.value.keys()}"
-        raise ValueError(msg)
-    return FileData(
-        content=store_item.value["content"],
-        created_at=store_item.value["created_at"],
-        modified_at=store_item.value["modified_at"],
-    )
-
-
-def _convert_file_data_to_store_item(file_data: FileData) -> dict[str, Any]:
-    """Convert FileData to a dict suitable for store.put().
+def _file_data_to_dict(file_data: FileData) -> dict[str, Any]:
+    """Convert FileData to a dict suitable for memory backend.
 
     Args:
         file_data: The FileData to convert.
@@ -485,6 +472,34 @@ def _convert_file_data_to_store_item(file_data: FileData) -> dict[str, Any]:
         "created_at": file_data["created_at"],
         "modified_at": file_data["modified_at"],
     }
+
+
+def _dict_to_file_data(value: dict[str, Any]) -> FileData:
+    """Convert a memory backend dict to FileData format.
+
+    Args:
+        value: Dictionary from memory backend containing file data.
+
+    Returns:
+        FileData with content, created_at, and modified_at fields.
+
+    Raises:
+        ValueError: If required fields are missing or have incorrect types.
+    """
+    if "content" not in value or not isinstance(value["content"], list):
+        msg = f"Value does not contain valid content field. Got: {value.keys()}"
+        raise ValueError(msg)
+    if "created_at" not in value or not isinstance(value["created_at"], str):
+        msg = f"Value does not contain valid created_at field. Got: {value.keys()}"
+        raise ValueError(msg)
+    if "modified_at" not in value or not isinstance(value["modified_at"], str):
+        msg = f"Value does not contain valid modified_at field. Got: {value.keys()}"
+        raise ValueError(msg)
+    return FileData(
+        content=value["content"],
+        created_at=value["created_at"],
+        modified_at=value["modified_at"],
+    )
 
 
 def _get_file_data_from_state(state: FilesystemState, file_path: str) -> FileData:
@@ -507,7 +522,12 @@ def _get_file_data_from_state(state: FilesystemState, file_path: str) -> FileDat
     return mock_filesystem[file_path]
 
 
-def _ls_tool_generator(custom_description: str | None = None, *, long_term_memory: bool) -> BaseTool:
+def _ls_tool_generator(
+    custom_description: str | None = None,
+    *,
+    long_term_memory: bool,
+    memory_backend: MemoryBackend | None = None
+) -> BaseTool:
     """Generate the ls (list files) tool.
 
     Args:
@@ -556,10 +576,9 @@ def _ls_tool_generator(custom_description: str | None = None, *, long_term_memor
         def ls(runtime: ToolRuntime[None, FilesystemState], path: str | None = None) -> list[str]:
             files = _get_filenames_from_state(runtime.state)
             # Add filenames from longterm memory
-            store = _get_store(runtime)
-            namespace = _get_namespace()
-            longterm_files = store.search(namespace)
-            longterm_files_prefixed = [_append_memories_prefix(f.key) for f in longterm_files]
+            backend = _get_memory_backend(memory_backend, runtime)
+            longterm_files = backend.ls()
+            longterm_files_prefixed = [_append_memories_prefix(key) for key in longterm_files]
             files.extend(longterm_files_prefixed)
             return _filter_files_by_path(files, path)
     else:
@@ -572,7 +591,12 @@ def _ls_tool_generator(custom_description: str | None = None, *, long_term_memor
     return ls
 
 
-def _read_file_tool_generator(custom_description: str | None = None, *, long_term_memory: bool) -> BaseTool:
+def _read_file_tool_generator(
+    custom_description: str | None = None,
+    *,
+    long_term_memory: bool,
+    memory_backend: MemoryBackend | None = None
+) -> BaseTool:
     """Generate the read_file tool.
 
     Args:
@@ -623,12 +647,11 @@ def _read_file_tool_generator(custom_description: str | None = None, *, long_ter
             file_path = _validate_path(file_path)
             if _has_memories_prefix(file_path):
                 stripped_file_path = _strip_memories_prefix(file_path)
-                store = _get_store(runtime)
-                namespace = _get_namespace()
-                item: Item | None = store.get(namespace, stripped_file_path)
-                if item is None:
+                backend = _get_memory_backend(memory_backend, runtime)
+                value = backend.get(stripped_file_path)
+                if value is None:
                     return f"Error: File '{file_path}' not found"
-                file_data = _convert_store_item_to_file_data(item)
+                file_data = _dict_to_file_data(value)
             else:
                 try:
                     file_data = _get_file_data_from_state(runtime.state, file_path)
@@ -655,7 +678,12 @@ def _read_file_tool_generator(custom_description: str | None = None, *, long_ter
     return read_file
 
 
-def _write_file_tool_generator(custom_description: str | None = None, *, long_term_memory: bool) -> BaseTool:
+def _write_file_tool_generator(
+    custom_description: str | None = None,
+    *,
+    long_term_memory: bool,
+    memory_backend: MemoryBackend | None = None
+) -> BaseTool:
     """Generate the write_file tool.
 
     Args:
@@ -709,12 +737,11 @@ def _write_file_tool_generator(custom_description: str | None = None, *, long_te
                 raise ValueError(value_error_msg)
             if _has_memories_prefix(file_path):
                 stripped_file_path = _strip_memories_prefix(file_path)
-                store = _get_store(runtime)
-                namespace = _get_namespace()
-                if store.get(namespace, stripped_file_path) is not None:
+                backend = _get_memory_backend(memory_backend, runtime)
+                if backend.get(stripped_file_path) is not None:
                     return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
                 new_file_data = _create_file_data(content)
-                store.put(namespace, stripped_file_path, _convert_file_data_to_store_item(new_file_data))
+                backend.put(stripped_file_path, _file_data_to_dict(new_file_data))
                 return f"Updated longterm memories file {file_path}"
             return _write_file_to_state(runtime.state, runtime.tool_call_id, file_path, content)
 
@@ -735,7 +762,12 @@ def _write_file_tool_generator(custom_description: str | None = None, *, long_te
     return write_file
 
 
-def _edit_file_tool_generator(custom_description: str | None = None, *, long_term_memory: bool) -> BaseTool:
+def _edit_file_tool_generator(
+    custom_description: str | None = None,
+    *,
+    long_term_memory: bool,
+    memory_backend: MemoryBackend | None = None
+) -> BaseTool:
     """Generate the edit_file tool.
 
     Args:
@@ -798,12 +830,11 @@ def _edit_file_tool_generator(custom_description: str | None = None, *, long_ter
             # Retrieve file data from appropriate storage
             if is_longterm_memory:
                 stripped_file_path = _strip_memories_prefix(file_path)
-                store = _get_store(runtime)
-                namespace = _get_namespace()
-                item: Item | None = store.get(namespace, stripped_file_path)
-                if item is None:
+                backend = _get_memory_backend(memory_backend, runtime)
+                value = backend.get(stripped_file_path)
+                if value is None:
                     return f"Error: File '{file_path}' not found"
-                file_data = _convert_store_item_to_file_data(item)
+                file_data = _dict_to_file_data(value)
             else:
                 try:
                     file_data = _get_file_data_from_state(runtime.state, file_path)
@@ -820,7 +851,7 @@ def _edit_file_tool_generator(custom_description: str | None = None, *, long_ter
 
             # Save to appropriate storage
             if is_longterm_memory:
-                store.put(namespace, stripped_file_path, _convert_file_data_to_store_item(new_file_data))
+                backend.put(stripped_file_path, _file_data_to_dict(new_file_data))
                 return full_msg
 
             return Command(
@@ -874,12 +905,18 @@ TOOL_GENERATORS = {
 }
 
 
-def _get_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None, *, long_term_memory: bool) -> list[BaseTool]:
+def _get_filesystem_tools(
+    custom_tool_descriptions: dict[str, str] | None = None,
+    *,
+    long_term_memory: bool,
+    memory_backend: MemoryBackend | None = None
+) -> list[BaseTool]:
     """Get filesystem tools.
 
     Args:
         custom_tool_descriptions: Optional custom descriptions for tools.
         long_term_memory: Whether to enable longterm memory support.
+        memory_backend: Optional memory backend for longterm storage.
 
     Returns:
         List of configured filesystem tools (ls, read_file, write_file, edit_file).
@@ -888,7 +925,11 @@ def _get_filesystem_tools(custom_tool_descriptions: dict[str, str] | None = None
         custom_tool_descriptions = {}
     tools = []
     for tool_name, tool_generator in TOOL_GENERATORS.items():
-        tool = tool_generator(custom_tool_descriptions.get(tool_name), long_term_memory=long_term_memory)
+        tool = tool_generator(
+            custom_tool_descriptions.get(tool_name),
+            long_term_memory=long_term_memory,
+            memory_backend=memory_backend
+        )
         tools.append(tool)
     return tools
 
@@ -933,6 +974,7 @@ class FilesystemMiddleware(AgentMiddleware):
         self,
         *,
         long_term_memory: bool = False,
+        memory_backend: MemoryBackend | None = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
@@ -942,12 +984,15 @@ class FilesystemMiddleware(AgentMiddleware):
 
         Args:
             long_term_memory: Whether to enable longterm memory support.
+            memory_backend: Optional custom memory backend for long-term storage.
+                If not provided and long_term_memory is True, will use runtime.store.
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
             skills: Optional list of SkillDefinition to load into virtual filesystem.
         """
         self.long_term_memory = long_term_memory
+        self.memory_backend = memory_backend
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
         self.skills = skills or []
         
@@ -961,7 +1006,11 @@ class FilesystemMiddleware(AgentMiddleware):
         skills_prompt = self._build_skills_prompt()
         self.system_prompt = base_prompt + skills_prompt
 
-        self.tools = _get_filesystem_tools(custom_tool_descriptions, long_term_memory=long_term_memory)
+        self.tools = _get_filesystem_tools(
+            custom_tool_descriptions,
+            long_term_memory=long_term_memory,
+            memory_backend=memory_backend
+        )
     
     def _build_skills_prompt(self) -> str:
         """Build the skills section of the system prompt.
@@ -1001,7 +1050,7 @@ class FilesystemMiddleware(AgentMiddleware):
         return prompt
     
     def before_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        """Load skills into virtual filesystem and agent memory from store if needed.
+        """Load skills into virtual filesystem and agent memory from backend if needed.
         
         Args:
             state: The state of the agent.
@@ -1011,37 +1060,37 @@ class FilesystemMiddleware(AgentMiddleware):
             State update with skills loaded and/or agent_memory loaded, or None if nothing to load.
 
         Raises:
-            ValueError: If long_term_memory is True but runtime.store is None.
+            ValueError: If long_term_memory is True but no backend or store is available.
         """
-        if self.long_term_memory and runtime.store is None:
-            msg = "Longterm memory is enabled, but no store is available"
+        if self.long_term_memory and self.memory_backend is None and runtime.store is None:
+            msg = "Longterm memory is enabled, but no memory backend or store is available"
             raise ValueError(msg)
         
         state_update = {}
         
-        # Load agent.md from store if long_term_memory is enabled
+        # Load agent.md from backend if long_term_memory is enabled
         if self.long_term_memory and "agent_memory" not in state:
             config = get_config()
             assistant_id = config.get("metadata", {}).get("assistant_id") if config else None
             
             if assistant_id is not None:
-                store = _get_store(runtime)
-                namespace = _get_namespace()
+                # Get backend (uses memory_backend if provided, else wraps runtime.store)
+                backend = _get_memory_backend(self.memory_backend, runtime)
                 
-                # Load /memories/agent.md from store
+                # Load /memories/agent.md from backend
                 # Strip the /memories/ prefix to get the key
                 agent_md_key = _strip_memories_prefix("/memories/agent.md")
-                item = store.get(namespace, agent_md_key)
+                value = backend.get(agent_md_key)
                 
-                if item is not None:
-                    # Extract content from store item
-                    file_data = _convert_store_item_to_file_data(item)
+                if value is not None:
+                    # Extract content from backend value
+                    file_data = _dict_to_file_data(value)
                     agent_memory_content = _file_data_to_string(file_data)
                 else:
-                    # Create empty agent.md in store
+                    # Create empty agent.md in backend
                     agent_memory_content = DEFAULT_MEMORY
                     empty_file_data = _create_file_data(agent_memory_content)
-                    store.put(namespace, agent_md_key, _convert_file_data_to_store_item(empty_file_data))
+                    backend.put(agent_md_key, _file_data_to_dict(empty_file_data))
                 
                 state_update["agent_memory"] = agent_memory_content
         
@@ -1226,3 +1275,61 @@ class FilesystemMiddleware(AgentMiddleware):
 
         tool_result = await handler(request)
         return self._intercept_large_tool_result(tool_result)
+
+
+from langchain.agents.middleware import AgentMiddleware, AgentState
+
+
+class MemoryState(AgentState):
+    """State for the filesystem middleware."""
+
+    agent_memory: NotRequired[str]
+    """Content of /memories/agent.md for long-term memory."""
+
+class MemoryMiddleware(AgentMiddleware):
+
+    state_schema = MemoryState
+
+    def before_agent(self, state: MemoryState, runtime: Runtime[Any]) -> dict[str, Any] | None:
+
+        # Load agent.md from backend if long_term_memory is enabled
+        if "agent_memory" not in state:
+            config = get_config()
+            assistant_id = config["metadata"]["assistant_id"]
+            namespace = (assistant_id, "filesystem")
+            key = "agent.md"
+            value = runtime.store.get(namespace, key)
+            if value is not None:
+                return {"agent_memory": "\n".join(value.value["content"])}
+
+    def wrap_model_call(
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        agent_memory_content = request.state.get("agent_memory", "")
+        if agent_memory_content:
+            final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+            request.system_prompt = (
+                final_prompt + "\n\n" + request.system_prompt
+                if request.system_prompt
+                else final_prompt
+            )
+
+            return handler(request)
+
+    async def awrap_model_call(
+            self,
+            request: ModelRequest,
+            handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        agent_memory_content = request.state.get("agent_memory", "")
+        if agent_memory_content:
+            final_prompt = f"<agent_memory>\n{agent_memory_content}\n</agent_memory>\n\n"
+            request.system_prompt = (
+                final_prompt + "\n\n" + request.system_prompt
+                if request.system_prompt
+                else final_prompt
+            )
+
+            return await handler(request)

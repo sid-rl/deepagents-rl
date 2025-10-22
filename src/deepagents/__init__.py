@@ -5,6 +5,7 @@ from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.local_filesystem import LocalFilesystemMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
 from deepagents.skills import load_skills, SkillDefinition
+from deepagents import memory
 
 __all__ = [
     "CompiledSubAgent",
@@ -15,4 +16,5 @@ __all__ = [
     "SubAgentMiddleware",
     "create_deep_agent",
     "load_skills",
+    "memory",
 ]

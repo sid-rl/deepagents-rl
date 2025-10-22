@@ -50,6 +50,7 @@ def create_deep_agent(
     context_schema: type[Any] | None = None,
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
+    memory_backend: Any | None = None,
     use_longterm_memory: bool = False,
     use_local_filesystem: bool = False,
     long_term_memory: bool = False,
@@ -84,9 +85,11 @@ def create_deep_agent(
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persisting longterm memories.
-        use_longterm_memory: Whether to use longterm memory - you must provide a store
-            in order to use longterm memory.
+        store: Optional store for persisting longterm memories (legacy, prefer memory_backend).
+        memory_backend: Optional custom memory backend for long-term storage. 
+            If not provided and use_longterm_memory is True, will use the store parameter.
+        use_longterm_memory: Whether to use longterm memory - you must provide either
+            a memory_backend or store in order to use longterm memory.
         use_local_filesystem: If True, injects LocalFilesystemMiddleware (tools operate on disk).
             When True, longterm memory is not supported and `use_longterm_memory` must be False.
             Skills are automatically discovered from ~/.deepagents/skills/ and ./.deepagents/skills/.
@@ -122,7 +125,11 @@ def create_deep_agent(
                 execution_policy=HostExecutionPolicy()
             )
             return [LocalFilesystemMiddleware(long_term_memory=long_term_memory), shell_middleware]
-        return [FilesystemMiddleware(long_term_memory=use_longterm_memory, skills=skills)]
+        return [FilesystemMiddleware(
+            long_term_memory=use_longterm_memory,
+            memory_backend=memory_backend,
+            skills=skills
+        )]
 
     deepagent_middleware = [
         TodoListMiddleware(),
