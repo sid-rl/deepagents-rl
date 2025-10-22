@@ -552,14 +552,33 @@ def _write_file_tool_generator(custom_description: str | None = None, middleware
         file_path: str,
         content: str,
         runtime: ToolRuntime[None, FilesystemState],
-    ) -> str:
+    ) -> Command | str:
         file_path = _validate_path(file_path)
         backend = _get_backend(runtime, middleware)
         if backend.get(file_path) is not None:
             return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+        
         new_file_data = _create_file_data(content)
-        backend.put(file_path, _file_data_to_dict(new_file_data))
-        return f"Updated file {file_path}"
+        
+        # Check if we need to use state (for StateBackend or CompositeBackend with StateBackend)
+        actual_backend = backend
+        if hasattr(backend, 'get_backend_for_key'):
+            actual_backend = backend.get_backend_for_key(file_path)
+        
+        uses_state = getattr(actual_backend, 'uses_state', False)
+        
+        if uses_state:
+            # Return Command to update state
+            return Command(
+                update={
+                    "files": {file_path: new_file_data},
+                    "messages": [ToolMessage(f"Updated file {file_path}", tool_call_id=runtime.tool_call_id)],
+                }
+            )
+        else:
+            # Direct backend write
+            backend.put(file_path, _file_data_to_dict(new_file_data))
+            return f"Updated file {file_path}"
 
     return write_file
 
@@ -613,7 +632,7 @@ def _edit_file_tool_generator(custom_description: str | None = None, middleware:
         runtime: ToolRuntime[None, FilesystemState],
         *,
         replace_all: bool = False,
-    ) -> str:
+    ) -> Command | str:
         file_path = _validate_path(file_path)
         backend = _get_backend(runtime, middleware)
         data = backend.get(file_path)
@@ -629,9 +648,25 @@ def _edit_file_tool_generator(custom_description: str | None = None, middleware:
         new_file_data, result_msg = result
         full_msg = f"{result_msg} in '{file_path}'"
 
-        # Save back to backend
-        backend.put(file_path, _file_data_to_dict(new_file_data))
-        return full_msg
+        # Check if we need to use state (for StateBackend or CompositeBackend with StateBackend)
+        actual_backend = backend
+        if hasattr(backend, 'get_backend_for_key'):
+            actual_backend = backend.get_backend_for_key(file_path)
+        
+        uses_state = getattr(actual_backend, 'uses_state', False)
+        
+        if uses_state:
+            # Return Command to update state
+            return Command(
+                update={
+                    "files": {file_path: new_file_data},
+                    "messages": [ToolMessage(full_msg, tool_call_id=runtime.tool_call_id)],
+                }
+            )
+        else:
+            # Direct backend write
+            backend.put(file_path, _file_data_to_dict(new_file_data))
+            return full_msg
 
     return edit_file
 
@@ -674,7 +709,11 @@ Here are the first 10 lines of the result:
 
 
 class _RuntimeStateAccessor:
-    """StateAccessor implementation that works with LangGraph runtime."""
+    """StateAccessor implementation that works with LangGraph runtime.
+    
+    This is a read-only accessor for state files. Writes are handled
+    by returning Command objects from the tools.
+    """
     
     def __init__(self, runtime: ToolRuntime[None, FilesystemState]):
         self.runtime = runtime
@@ -683,10 +722,9 @@ class _RuntimeStateAccessor:
         return self.runtime.state.get("files", {})
     
     def update_files(self, updates: dict[str, dict[str, Any] | None]) -> None:
-        # Store updates to be applied - they'll be returned via Command
-        if not hasattr(self.runtime, '_pending_file_updates'):
-            self.runtime._pending_file_updates = {}
-        self.runtime._pending_file_updates.update(updates)
+        # This shouldn't be called - StateBackend is read-only
+        # Writes must go through Command objects returned from tools
+        raise NotImplementedError("StateBackend updates must use Command objects")
 
 
 class FilesystemMiddleware(AgentMiddleware):

@@ -21,24 +21,30 @@ class StateAccessor(Protocol):
 class StateBackend:
     """Backend that stores files in agent state/checkpointer.
     
-    This is the default backend that maintains backward compatibility
-    with the original state-based virtual filesystem.
+    This backend is READ-ONLY from the backend's perspective. Writes must
+    be handled by the tools returning Command objects to update state.
+    
+    This maintains backward compatibility with the original state-based
+    virtual filesystem while working with the pluggable backend system.
     """
     
     def __init__(self, state_accessor: StateAccessor):
         """Initialize the state backend.
         
         Args:
-            state_accessor: Object that provides access to read/write state
+            state_accessor: Object that provides read access to state
         """
         self.state_accessor = state_accessor
+        self.uses_state = True  # Flag for tools to know to use Commands
     
     def get(self, key: str) -> dict[str, Any] | None:
         files = self.state_accessor.get_files()
         return files.get(key)
     
     def put(self, key: str, value: dict[str, Any]) -> None:
-        self.state_accessor.update_files({key: value})
+        # This is a no-op - actual writes happen via Command objects
+        # The tools check uses_state flag and handle this appropriately
+        pass
     
     def ls(self) -> list[str]:
         files = self.state_accessor.get_files()
@@ -193,6 +199,9 @@ class CompositeBackend:
     
     This enables the common pattern of having ephemeral files in state
     and persistent files in a separate backend.
+    
+    Important: If virtual_backend is a StateBackend, this backend will also
+    have uses_state=True to indicate tools should use Command objects for writes.
     """
     
     def __init__(
@@ -211,6 +220,8 @@ class CompositeBackend:
         self.virtual_backend = virtual_backend
         self.long_term_backend = long_term_backend
         self.long_term_prefix = long_term_prefix
+        # Inherit uses_state flag from virtual backend if it has one
+        self.uses_state = getattr(virtual_backend, 'uses_state', False)
     
     def _is_long_term(self, key: str) -> bool:
         """Check if key should be routed to long-term backend."""
@@ -236,6 +247,12 @@ class CompositeBackend:
             self.long_term_backend.put(self._strip_prefix(key), value)
         else:
             self.virtual_backend.put(key, value)
+    
+    def get_backend_for_key(self, key: str) -> Any:
+        """Get the actual backend that handles this key."""
+        if self._is_long_term(key):
+            return self.long_term_backend
+        return self.virtual_backend
     
     def ls(self) -> list[str]:
         virtual_files = self.virtual_backend.ls()
