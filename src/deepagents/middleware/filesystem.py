@@ -262,7 +262,39 @@ WRITE_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
     f"\n- file_paths prefixed with the {MEMORIES_PREFIX} path will be written to the longterm filesystem."
 )
 
-FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`
+GLOB_TOOL_DESCRIPTION = """Find files matching a glob pattern.
+
+Usage:
+- The glob tool finds files by matching patterns with wildcards
+- Supports standard glob patterns: `*` (any characters), `**` (any directories), `?` (single character)
+- Patterns can be absolute (starting with `/`) or relative
+- Returns a list of absolute file paths that match the pattern
+
+Examples:
+- `**/*.py` - Find all Python files
+- `*.txt` - Find all text files in root
+- `/subdir/**/*.md` - Find all markdown files under /subdir"""
+GLOB_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- Patterns can match files in the longterm filesystem (files prefixed with {MEMORIES_PREFIX})"
+
+GREP_TOOL_DESCRIPTION = """Search for a pattern in files.
+
+Usage:
+- The grep tool searches for text patterns across files
+- The pattern parameter is the text to search for (literal string, not regex)
+- The path parameter filters which directory to search in (default is `/` for all files)
+- The include parameter accepts a glob pattern to filter which files to search (e.g., `*.py`)
+- The output_mode parameter controls the output format:
+  - `files_with_matches`: List only file paths containing matches (default)
+  - `content`: Show matching lines with file path and line numbers
+  - `count`: Show count of matches per file
+
+Examples:
+- Search all files: `grep(pattern="TODO")`
+- Search Python files only: `grep(pattern="import", include="*.py")`
+- Show matching lines: `grep(pattern="error", output_mode="content")`"""
+GREP_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- Can search files in the longterm filesystem (files prefixed with {MEMORIES_PREFIX})"
+
+FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`
 
 You have access to a filesystem which you can interact with using these tools.
 All file paths must start with a /.
@@ -270,7 +302,9 @@ All file paths must start with a /.
 - ls: list all files in the filesystem
 - read_file: read a file from the filesystem
 - write_file: write to a file in the filesystem
-- edit_file: edit a file in the filesystem"""
+- edit_file: edit a file in the filesystem
+- glob: find files matching a pattern (e.g., "**/*.py")
+- grep: search for text within files"""
 FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
 
 You also have access to a longterm filesystem in which you can store files that you want to keep around for longer than the current conversation.
@@ -387,11 +421,63 @@ def _edit_file_tool_generator(
     return edit_file
 
 
+def _glob_tool_generator(
+    backend: MemoryBackend,
+    custom_description: str | None = None,
+) -> BaseTool:
+    """Generate the glob tool.
+
+    Args:
+        backend: Backend to use for file storage.
+        custom_description: Optional custom description for the tool.
+
+    Returns:
+        Configured glob tool that finds files by pattern using the backend.
+    """
+    tool_description = custom_description or GLOB_TOOL_DESCRIPTION
+
+    @tool(description=tool_description)
+    def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState]) -> list[str]:
+        return backend.glob(pattern, runtime=runtime)
+
+    return glob
+
+
+def _grep_tool_generator(
+    backend: MemoryBackend,
+    custom_description: str | None = None,
+) -> BaseTool:
+    """Generate the grep tool.
+
+    Args:
+        backend: Backend to use for file storage.
+        custom_description: Optional custom description for the tool.
+
+    Returns:
+        Configured grep tool that searches for patterns in files using the backend.
+    """
+    tool_description = custom_description or GREP_TOOL_DESCRIPTION
+
+    @tool(description=tool_description)
+    def grep(
+        pattern: str,
+        runtime: ToolRuntime[None, FilesystemState],
+        path: str = "/",
+        include: str | None = None,
+        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
+    ) -> str:
+        return backend.grep(pattern, path=path, include=include, output_mode=output_mode, runtime=runtime)
+
+    return grep
+
+
 TOOL_GENERATORS = {
     "ls": _ls_tool_generator,
     "read_file": _read_file_tool_generator,
     "write_file": _write_file_tool_generator,
     "edit_file": _edit_file_tool_generator,
+    "glob": _glob_tool_generator,
+    "grep": _grep_tool_generator,
 }
 
 
@@ -406,7 +492,7 @@ def _get_filesystem_tools(
         custom_tool_descriptions: Optional custom descriptions for tools.
 
     Returns:
-        List of configured filesystem tools (ls, read_file, write_file, edit_file).
+        List of configured filesystem tools (ls, read_file, write_file, edit_file, glob, grep).
     """
     if custom_tool_descriptions is None:
         custom_tool_descriptions = {}
@@ -430,8 +516,8 @@ Here are the first 10 lines of the result:
 class FilesystemMiddleware(AgentMiddleware):
     """Middleware for providing filesystem tools to an agent.
 
-    This middleware adds four filesystem tools to the agent: ls, read_file, write_file,
-    and edit_file. Files can be stored in two locations:
+    This middleware adds six filesystem tools to the agent: ls, read_file, write_file,
+    edit_file, glob, and grep. Files can be stored in two locations:
     - Short-term: In the agent's state (ephemeral, lasts only for the conversation)
     - Long-term: In a persistent store (persists across conversations when enabled)
 

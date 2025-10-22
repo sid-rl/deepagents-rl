@@ -113,7 +113,7 @@ def create_deep_agent(
             subagents=subagents if subagents is not None else [],
             default_middleware=[
                 TodoListMiddleware(),
-                FilesystemMiddleware(),
+                FilesystemMiddleware(backend=memory_backend),
                 SummarizationMiddleware(
                     model=model,
                     max_tokens_before_summary=170000,
