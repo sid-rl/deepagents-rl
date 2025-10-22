@@ -5,6 +5,7 @@ from typing import Any, Optional
 from langchain.tools import ToolRuntime
 from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
+from langgraph.runtime import get_runtime
 
 
 class StoreBackend:
@@ -15,16 +16,6 @@ class StoreBackend:
     
     The namespace can include an optional assistant_id for multi-agent isolation.
     """
-    
-    def __init__(self, runtime: ToolRuntime, store: Optional[BaseStore] = None) -> None:
-        """Initialize with runtime and optional store.
-        
-        Args:
-            runtime: ToolRuntime providing access to store via runtime.store.
-            store: Optional explicit store instance. If None, uses runtime.store.
-        """
-        self.runtime = runtime
-        self._store = store
     
     @property
     def uses_state(self) -> bool:
@@ -44,7 +35,7 @@ class StoreBackend:
         Raises:
             ValueError: If no store is available
         """
-        store = self._store or self.runtime.store
+        store = get_runtime().store
         if store is None:
             msg = "Store is required but not available in runtime"
             raise ValueError(msg)
