@@ -14,15 +14,29 @@ class FilesystemBackend:
     as plain text, and metadata (timestamps) are derived from filesystem stats.
     """
 
-    def __init__(self, root_dir: Optional[str | Path] = None) -> None:
+    def __init__(
+        self, 
+        root_dir: Optional[str | Path] = None,
+        prefix_mapping: Optional[dict[str, str | Path]] = None
+    ) -> None:
         """Initialize filesystem backend.
         
         Args:
             root_dir: Optional root directory for file operations. If provided,
                      all file paths will be resolved relative to this directory.
                      If not provided, uses the current working directory.
+            prefix_mapping: Optional mapping of path prefixes to directories.
+                          For example: {"/memories/": "~/.deepagents/agent/"}
+                          When a path starts with a mapped prefix, it will be
+                          resolved to the corresponding directory.
         """
         self.cwd = Path(root_dir) if root_dir else Path.cwd()
+        self.prefix_mapping = {}
+        if prefix_mapping:
+            for prefix, directory in prefix_mapping.items():
+                # Expand user paths like ~
+                expanded_dir = Path(directory).expanduser()
+                self.prefix_mapping[prefix] = expanded_dir
 
     @property
     def uses_state(self) -> bool:
@@ -55,6 +69,13 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
         Returns:
             Resolved absolute Path object
         """
+        # Check if the key matches any prefix mapping
+        for prefix, directory in self.prefix_mapping.items():
+            if key.startswith(prefix):
+                # Remove the prefix and resolve relative to the mapped directory
+                relative_path = key[len(prefix):]
+                return directory / relative_path
+        
         path = Path(key)
         if path.is_absolute():
             return path
@@ -70,7 +91,6 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
             FileData dict with content (list of lines) and timestamps, or None if not found.
         """
         file_path = self._resolve_path(key)
-
         if not file_path.exists() or not file_path.is_file():
             return None
 
@@ -126,7 +146,6 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
             dir_path = self.cwd
         else:
             dir_path = self._resolve_path(prefix)
-
         if not dir_path.exists() or not dir_path.is_dir():
             return []
 

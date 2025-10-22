@@ -101,7 +101,7 @@ def create_deep_agent(
     filesystem_kwargs = {}
     if memory_backend is not None:
         filesystem_kwargs["backend"] = memory_backend
-    elif long_term_backend is not None:
+    if long_term_backend is not None:
         filesystem_kwargs["long_term_backend"] = long_term_backend
 
     deepagent_middleware = [

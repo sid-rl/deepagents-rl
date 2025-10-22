@@ -517,15 +517,23 @@ async def main(agent_name: str, no_memory: bool):
         tools.append(web_search)
 
     from deepagents.memory.backends.filesystem import FilesystemBackend
+    from deepagents.middleware.agent_memory import AgentMemoryMiddleware
     from pathlib import Path
 
     backend = FilesystemBackend()
     
-    # For long-term memory, point to ~/.deepagents/AGENT_NAME/ directory
+    # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
+    agent_middleware = []
     if assistant_id:
-        longterm_root = Path.home() / ".deepagents" / assistant_id
-        longterm_root.mkdir(parents=True, exist_ok=True)
-        long_term_backend = FilesystemBackend(root_dir=longterm_root)
+        agent_dir = Path.home() / ".deepagents" / assistant_id
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Long-term backend - rooted at agent directory
+        # This handles both /memories/ files and /agent.md
+        long_term_backend = FilesystemBackend(root_dir=agent_dir, prefix_mapping={"/memories/": "~/.deepagents/agent/"})
+        
+        # Use the same backend for agent memory middleware
+        agent_middleware.append(AgentMemoryMiddleware(backend=long_term_backend))
     else:
         long_term_backend = FilesystemBackend()
     
@@ -535,6 +543,7 @@ async def main(agent_name: str, no_memory: bool):
         system_prompt=get_default_coding_instructions(),
         memory_backend=backend,
         long_term_backend=long_term_backend,
+        middleware=agent_middleware,
     ).with_config(config)
     
     agent.checkpointer = InMemorySaver()

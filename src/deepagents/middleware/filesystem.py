@@ -652,8 +652,12 @@ class FilesystemMiddleware(AgentMiddleware):
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
         """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
-        
-        if backend is not None:
+        if backend is not None and long_term_backend is not None:
+            self.backend = CompositeBackend(
+                default=backend,
+                routes={MEMORIES_PREFIX: long_term_backend}
+            )
+        elif backend is not None:
             self.backend = backend
         elif long_term_backend is not None:
             self.backend = CompositeBackend(
@@ -664,10 +668,10 @@ class FilesystemMiddleware(AgentMiddleware):
             self.backend = StateBackend()
         
         self.system_prompt = FILESYSTEM_SYSTEM_PROMPT
+        if long_term_backend is not None:
+            self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
         if system_prompt is not None:
             self.system_prompt = system_prompt
-        elif isinstance(self.backend, CompositeBackend):
-            self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
 
         # Add backend-specific system prompt additions
         backend_prompt_addition = self._get_backend_prompt_addition()
