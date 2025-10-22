@@ -17,6 +17,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
+from deepagents.memory.protocol import MemoryBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
@@ -48,6 +49,7 @@ def create_deep_agent(
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
     use_longterm_memory: bool = False,
+    memory_backend: MemoryBackend | None = None,
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
     debug: bool = False,
     name: str | None = None,
@@ -78,9 +80,11 @@ def create_deep_agent(
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persisting longterm memories.
+        store: Optional store for persisting longterm memories. (Deprecated: use memory_backend instead)
         use_longterm_memory: Whether to use longterm memory - you must provide a store
-            in order to use longterm memory.
+            in order to use longterm memory. (Deprecated: use memory_backend instead)
+        memory_backend: Optional pluggable memory backend for file storage. If provided,
+            overrides store and use_longterm_memory parameters.
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
             interrupt configs.
         debug: Whether to enable debug mode. Passed through to create_agent.
@@ -93,20 +97,25 @@ def create_deep_agent(
     if model is None:
         model = get_default_model()
 
+    # Handle memory backend configuration
+    # Priority: memory_backend > use_longterm_memory (backward compat)
+    filesystem_kwargs = {}
+    if memory_backend is not None:
+        filesystem_kwargs["backend"] = memory_backend
+    elif use_longterm_memory:
+        # Backward compatibility: use_longterm_memory=True creates Store-backed long-term memory
+        filesystem_kwargs["long_term_memory"] = True
+
     deepagent_middleware = [
         TodoListMiddleware(),
-        FilesystemMiddleware(
-            long_term_memory=use_longterm_memory,
-        ),
+        FilesystemMiddleware(**filesystem_kwargs),
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
             subagents=subagents if subagents is not None else [],
             default_middleware=[
                 TodoListMiddleware(),
-                FilesystemMiddleware(
-                    long_term_memory=use_longterm_memory,
-                ),
+                FilesystemMiddleware(**filesystem_kwargs),
                 SummarizationMiddleware(
                     model=model,
                     max_tokens_before_summary=170000,
