@@ -4,6 +4,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from langgraph.types import Command
+
+from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement
 
 
 class FilesystemBackend:
@@ -67,56 +70,6 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
             return path
         return self.cwd / path
 
-    def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Read file from filesystem.
-
-        Args:
-            key: File path (absolute or relative to cwd, e.g., "notes.txt" or "/home/user/notes.txt")
-
-        Returns:
-            FileData dict with content (list of lines) and timestamps, or None if not found.
-        """
-        file_path = self._resolve_path(key)
-        if not file_path.exists() or not file_path.is_file():
-            return None
-
-        try:
-            # Read content as lines
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read().splitlines()
-
-            # Get timestamps from filesystem
-            stat = file_path.stat()
-            created_at = datetime.fromtimestamp(stat.st_ctime).isoformat() + "Z"
-            modified_at = datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z"
-
-            return {
-                "content": content,
-                "created_at": created_at,
-                "modified_at": modified_at,
-            }
-        except (OSError, UnicodeDecodeError):
-            return None
-
-    def put(self, key: str, value: dict[str, Any]) -> None:
-        """Write file to filesystem.
-
-        Args:
-            key: File path (absolute or relative to cwd, e.g., "notes.txt" or "/home/user/notes.txt")
-            value: FileData dict with "content" (list of lines)
-        """
-        file_path = self._resolve_path(key)
-
-        # Create parent directories if needed
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write content (join lines with newlines)
-        content = value.get("content", [])
-        text = "\n".join(content)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(text)
-
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from filesystem.
 
@@ -165,14 +118,131 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
             pass
 
         return sorted(results)
+    
+    def read(
+        self, 
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content with line numbers.
+        
+        Args:
+            file_path: Absolute or relative file path
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
+        
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        resolved_path = self._resolve_path(file_path)
+        
+        if not resolved_path.exists() or not resolved_path.is_file():
+            return f"Error: File '{file_path}' not found"
+        
+        try:
+            with open(resolved_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            empty_msg = check_empty_content(content)
+            if empty_msg:
+                return empty_msg
+            
+            lines = content.splitlines()
+            start_idx = offset
+            end_idx = min(start_idx + limit, len(lines))
+            
+            if start_idx >= len(lines):
+                return f"Error: Line offset {offset} exceeds file length ({len(lines)} lines)"
+            
+            selected_lines = lines[start_idx:end_idx]
+            return format_content_with_line_numbers(selected_lines, start_line=start_idx + 1)
+        except (OSError, UnicodeDecodeError) as e:
+            return f"Error reading file '{file_path}': {e}"
+    
+    def write(
+        self, 
+        file_path: str,
+        content: str,
+    ) -> Command | str:
+        """Create a new file with content.
+        
+        Args:
+            file_path: Absolute or relative file path
+            content: File content as a string
+        
+        Returns:
+            Success message or error if file already exists.
+        """
+        resolved_path = self._resolve_path(file_path)
+        
+        if resolved_path.exists():
+            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+        
+        try:
+            # Create parent directories if needed
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(resolved_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            
+            return f"Updated file {file_path}"
+        except (OSError, UnicodeEncodeError) as e:
+            return f"Error writing file '{file_path}': {e}"
+    
+    def edit(
+        self, 
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file by replacing string occurrences.
+        
+        Args:
+            file_path: Absolute or relative file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences
+        
+        Returns:
+            Success message or error message on failure.
+        """
+        resolved_path = self._resolve_path(file_path)
+        
+        if not resolved_path.exists() or not resolved_path.is_file():
+            return f"Error: File '{file_path}' not found"
+        
+        try:
+            with open(resolved_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            result = perform_string_replacement(content, old_string, new_string, replace_all)
+            
+            if isinstance(result, str):
+                return result
+            
+            new_content, occurrences = result
+            
+            with open(resolved_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            
+            return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
+        except (OSError, UnicodeDecodeError, UnicodeEncodeError) as e:
+            return f"Error editing file '{file_path}': {e}"
 
-    def delete(self, key: str) -> None:
+    def delete(self, file_path: str) -> Command | None:
         """Delete file from filesystem.
 
         Args:
-            key: File path to delete (absolute or relative to cwd)
+            file_path: File path to delete (absolute or relative to cwd)
+        
+        Returns:
+            None (direct filesystem modification)
         """
-        file_path = self._resolve_path(key)
+        resolved_path = self._resolve_path(file_path)
 
-        if file_path.exists() and file_path.is_file():
-            file_path.unlink()
+        if resolved_path.exists() and resolved_path.is_file():
+            resolved_path.unlink()
+        
+        return None

@@ -6,6 +6,15 @@ from langchain.tools import ToolRuntime
 from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
 from langgraph.runtime import get_runtime
+from langgraph.types import Command
+
+from deepagents.memory.backends.utils import (
+    create_file_data,
+    update_file_data,
+    file_data_to_string,
+    format_read_response,
+    perform_string_replacement,
+)
 
 
 class StoreBackend:
@@ -102,36 +111,6 @@ class StoreBackend:
             "modified_at": file_data["modified_at"],
         }
     
-    def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Get file from store.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-        
-        Returns:
-            FileData dict or None if not found.
-        """
-        store = self._get_store()
-        namespace = self._get_namespace()
-        item: Optional[Item] = store.get(namespace, key)
-        
-        if item is None:
-            return None
-        
-        return self._convert_store_item_to_file_data(item)
-    
-    def put(self, key: str, value: dict[str, Any]) -> None:
-        """Store file in store.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-            value: FileData dict
-        """
-        store = self._get_store()
-        namespace = self._get_namespace()
-        store_value = self._convert_file_data_to_store_value(value)
-        store.put(namespace, key, store_value)
-    
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from store.
         
@@ -149,12 +128,122 @@ class StoreBackend:
         
         return [item.key for item in items]
     
-    def delete(self, key: str) -> None:
-        """Delete file from store.
+    def read(
+        self, 
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content with line numbers.
         
         Args:
-            key: File path to delete
+            file_path: Absolute file path
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
+        
+        Returns:
+            Formatted file content with line numbers, or error message.
         """
         store = self._get_store()
         namespace = self._get_namespace()
-        store.delete(namespace, key)
+        item: Optional[Item] = store.get(namespace, file_path)
+        
+        if item is None:
+            return f"Error: File '{file_path}' not found"
+        
+        try:
+            file_data = self._convert_store_item_to_file_data(item)
+        except ValueError as e:
+            return f"Error: {e}"
+        
+        return format_read_response(file_data, offset, limit)
+    
+    def write(
+        self, 
+        file_path: str,
+        content: str,
+    ) -> Command | str:
+        """Create a new file with content.
+        
+        Args:
+            file_path: Absolute file path
+            content: File content as a string
+        
+        Returns:
+            Success message or error if file already exists.
+        """
+        store = self._get_store()
+        namespace = self._get_namespace()
+        
+        # Check if file exists
+        existing = store.get(namespace, file_path)
+        if existing is not None:
+            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+        
+        # Create new file
+        file_data = create_file_data(content)
+        store_value = self._convert_file_data_to_store_value(file_data)
+        store.put(namespace, file_path, store_value)
+        
+        return f"Updated file {file_path}"
+    
+    def edit(
+        self, 
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file by replacing string occurrences.
+        
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences
+        
+        Returns:
+            Success message or error message on failure.
+        """
+        store = self._get_store()
+        namespace = self._get_namespace()
+        
+        # Get existing file
+        item = store.get(namespace, file_path)
+        if item is None:
+            return f"Error: File '{file_path}' not found"
+        
+        try:
+            file_data = self._convert_store_item_to_file_data(item)
+        except ValueError as e:
+            return f"Error: {e}"
+        
+        content = file_data_to_string(file_data)
+        result = perform_string_replacement(content, old_string, new_string, replace_all)
+        
+        if isinstance(result, str):
+            return result
+        
+        new_content, occurrences = result
+        new_file_data = update_file_data(file_data, new_content)
+        
+        # Update file in store
+        store_value = self._convert_file_data_to_store_value(new_file_data)
+        store.put(namespace, file_path, store_value)
+        
+        return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
+    
+    def delete(self, file_path: str) -> Command | None:
+        """Delete file from store.
+        
+        Args:
+            file_path: File path to delete
+        
+        Returns:
+            None (direct store modification)
+        """
+        store = self._get_store()
+        namespace = self._get_namespace()
+        store.delete(namespace, file_path)
+        
+        return None

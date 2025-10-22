@@ -4,6 +4,14 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
+from langgraph.types import Command
+
+from .utils import (
+    create_file_data,
+    format_content_with_line_numbers,
+    check_empty_content,
+    perform_string_replacement,
+)
 
 
 class SQLiteBackend:
@@ -71,59 +79,6 @@ class SQLiteBackend:
         """Get agent_id for queries (empty string if None)."""
         return self.agent_id or ""
     
-    def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Get file from database.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-        
-        Returns:
-            FileData dict or None if not found.
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT content, created_at, modified_at FROM files WHERE key = ? AND agent_id = ?",
-                (key, self._get_agent_id())
-            )
-            row = cursor.fetchone()
-            
-            if row is None:
-                return None
-            
-            try:
-                content = json.loads(row["content"])
-                return {
-                    "content": content,
-                    "created_at": row["created_at"],
-                    "modified_at": row["modified_at"],
-                }
-            except json.JSONDecodeError:
-                return None
-    
-    def put(self, key: str, value: dict[str, Any]) -> None:
-        """Store file to database.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-            value: FileData dict
-        """
-        content_json = json.dumps(value["content"])
-        agent_id = self._get_agent_id()
-        
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO files (key, agent_id, content, created_at, modified_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(key, agent_id) DO UPDATE SET
-                    content = excluded.content,
-                    modified_at = excluded.modified_at
-                """,
-                (key, agent_id, content_json, value["created_at"], value["modified_at"])
-            )
-            conn.commit()
-    
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from database.
         
@@ -149,15 +104,161 @@ class SQLiteBackend:
             
             return sorted([row[0] for row in cursor.fetchall()])
     
-    def delete(self, key: str) -> None:
+    def read(
+        self, 
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content with line numbers.
+        
+        Args:
+            file_path: Absolute file path
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
+        
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT content FROM files WHERE key = ? AND agent_id = ?",
+                (file_path, self._get_agent_id())
+            )
+            row = cursor.fetchone()
+            
+            if row is None:
+                return f"Error: File '{file_path}' not found"
+            
+            try:
+                content_lines = json.loads(row["content"])
+                content = "\n".join(content_lines)
+                
+                empty_msg = check_empty_content(content)
+                if empty_msg:
+                    return empty_msg
+                
+                lines = content.splitlines()
+                start_idx = offset
+                end_idx = min(start_idx + limit, len(lines))
+                
+                if start_idx >= len(lines):
+                    return f"Error: Line offset {offset} exceeds file length ({len(lines)} lines)"
+                
+                selected_lines = lines[start_idx:end_idx]
+                return format_content_with_line_numbers(selected_lines, start_line=start_idx + 1)
+            except json.JSONDecodeError:
+                return f"Error: Corrupted file data for '{file_path}'"
+    
+    def write(
+        self, 
+        file_path: str,
+        content: str,
+    ) -> Command | str:
+        """Create a new file with content.
+        
+        Args:
+            file_path: Absolute file path
+            content: File content as a string
+        
+        Returns:
+            Success message or error if file already exists.
+        """
+        # Check if file exists
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM files WHERE key = ? AND agent_id = ?",
+                (file_path, self._get_agent_id())
+            )
+            if cursor.fetchone() is not None:
+                return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+        
+        # Create new file
+        file_data = create_file_data(content)
+        content_json = json.dumps(file_data["content"])
+        agent_id = self._get_agent_id()
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO files (key, agent_id, content, created_at, modified_at) VALUES (?, ?, ?, ?, ?)",
+                (file_path, agent_id, content_json, file_data["created_at"], file_data["modified_at"])
+            )
+            conn.commit()
+        
+        return f"Updated file {file_path}"
+    
+    def edit(
+        self, 
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file by replacing string occurrences.
+        
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences
+        
+        Returns:
+            Success message or error message on failure.
+        """
+        # Get existing file
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT content, created_at FROM files WHERE key = ? AND agent_id = ?",
+                (file_path, self._get_agent_id())
+            )
+            row = cursor.fetchone()
+            
+            if row is None:
+                return f"Error: File '{file_path}' not found"
+            
+            try:
+                content_lines = json.loads(row["content"])
+                content = "\n".join(content_lines)
+            except json.JSONDecodeError:
+                return f"Error: Corrupted file data for '{file_path}'"
+        
+        # Perform replacement
+        result = perform_string_replacement(content, old_string, new_string, replace_all)
+        
+        if isinstance(result, str):
+            return result
+        
+        new_content, occurrences = result
+        
+        # Update file
+        file_data = create_file_data(new_content, created_at=row["created_at"])
+        content_json = json.dumps(file_data["content"])
+        
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE files SET content = ?, modified_at = ? WHERE key = ? AND agent_id = ?",
+                (content_json, file_data["modified_at"], file_path, self._get_agent_id())
+            )
+            conn.commit()
+        
+        return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
+    
+    def delete(self, file_path: str) -> Command | None:
         """Delete file from database.
         
         Args:
-            key: File path to delete
+            file_path: File path to delete
+        
+        Returns:
+            None (direct database modification)
         """
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "DELETE FROM files WHERE key = ? AND agent_id = ?",
-                (key, self._get_agent_id())
+                (file_path, self._get_agent_id())
             )
             conn.commit()
+        
+        return None

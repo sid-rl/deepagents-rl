@@ -207,87 +207,6 @@ def _create_file_data(
     }
 
 
-def _update_file_data(
-    file_data: FileData,
-    content: str | list[str],
-) -> FileData:
-    """Update FileData with new content while preserving creation timestamp.
-
-    Args:
-        file_data: Existing FileData object to update.
-        content: New file content as a string or list of lines.
-
-    Returns:
-        Updated FileData object with new content and updated `modified_at`
-        timestamp. The `created_at` timestamp is preserved from the original.
-
-    Example:
-        ```python
-        original = create_file_data("Hello")
-        updated = update_file_data(original, "Hello World")
-        # updated["created_at"] == original["created_at"]
-        # updated["modified_at"] > original["modified_at"]
-        ```
-    """
-    lines = content.split("\n") if isinstance(content, str) else content
-    now = datetime.now(UTC).isoformat()
-
-    return {
-        "content": lines,
-        "created_at": file_data["created_at"],
-        "modified_at": now,
-    }
-
-
-def _file_data_to_string(file_data: FileData) -> str:
-    r"""Convert FileData to plain string content.
-
-    Joins the lines stored in FileData with newline characters to produce
-    a single string representation of the file content.
-
-    Args:
-        file_data: FileData object containing lines of content.
-
-    Returns:
-        File content as a single string with lines joined by newlines.
-
-    Example:
-        ```python
-        file_data = {
-            "content": ["Hello", "World"],
-            "created_at": "...",
-            "modified_at": "...",
-        }
-        file_data_to_string(file_data)  # Returns: "Hello\nWorld"
-        ```
-    """
-    return "\n".join(file_data["content"])
-
-
-def _check_empty_content(content: str) -> str | None:
-    """Check if file content is empty and return a warning message.
-
-    Args:
-        content: File content to check.
-
-    Returns:
-        Warning message string if content is empty or contains only whitespace,
-        `None` otherwise.
-
-    Example:
-        ```python
-        check_empty_content("")  # Returns: "System reminder: File exists but has empty contents"
-        check_empty_content("   ")  # Returns: "System reminder: File exists but has empty contents"
-        check_empty_content("Hello")  # Returns: None
-        ```
-    """
-    if not content or content.strip() == "":
-        return EMPTY_CONTENT_WARNING
-    return None
-
-
-
-
 class FilesystemState(AgentState):
     """State for the filesystem middleware."""
 
@@ -398,29 +317,6 @@ def _read_file_tool_generator(
     """
     tool_description = custom_description or READ_FILE_TOOL_DESCRIPTION
 
-    def _read_file_data_content(file_data: FileData, offset: int, limit: int) -> str:
-        """Read and format file content with line numbers.
-
-        Args:
-            file_data: The file data to read.
-            offset: Line offset to start reading from (0-indexed).
-            limit: Maximum number of lines to read.
-
-        Returns:
-            Formatted file content with line numbers, or an error message.
-        """
-        content = _file_data_to_string(file_data)
-        empty_msg = _check_empty_content(content)
-        if empty_msg:
-            return empty_msg
-        lines = content.splitlines()
-        start_idx = offset
-        end_idx = min(start_idx + limit, len(lines))
-        if start_idx >= len(lines):
-            return f"Error: Line offset {offset} exceeds file length ({len(lines)} lines)"
-        selected_lines = lines[start_idx:end_idx]
-        return _format_content_with_line_numbers(selected_lines, format_style="tab", start_line=start_idx + 1)
-
     @tool(description=tool_description)
     def read_file(
         file_path: str,
@@ -429,10 +325,7 @@ def _read_file_tool_generator(
         limit: int = DEFAULT_READ_LIMIT,
     ) -> str:
         file_path = _validate_path(file_path)
-        file_data = backend.get(file_path)
-        if file_data is None:
-            return f"Error: File '{file_path}' not found"
-        return _read_file_data_content(file_data, offset, limit)
+        return backend.read(file_path, offset=offset, limit=limit)
 
     return read_file
 
@@ -459,23 +352,7 @@ def _write_file_tool_generator(
         runtime: ToolRuntime[None, FilesystemState],
     ) -> Command | str:
         file_path = _validate_path(file_path)
-        if not runtime.tool_call_id:
-            value_error_msg = "Tool call ID is required for write_file invocation"
-            raise ValueError(value_error_msg)
-        
-        existing = backend.get(file_path)
-        if existing:
-            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
-        
-        new_file_data = _create_file_data(content)
-        result = backend.put(file_path, new_file_data)
-        
-        if isinstance(result, Command):
-            return result
-        elif isinstance(result, str):
-            return result
-        else:
-            return f"Updated file {file_path}"
+        return backend.write(file_path, content)
 
     return write_file
 
@@ -495,36 +372,6 @@ def _edit_file_tool_generator(
     """
     tool_description = custom_description or EDIT_FILE_TOOL_DESCRIPTION
 
-    def _perform_file_edit(
-        file_data: FileData,
-        old_string: str,
-        new_string: str,
-        *,
-        replace_all: bool = False,
-    ) -> tuple[FileData, str] | str:
-        """Perform string replacement on file data.
-
-        Args:
-            file_data: The file data to edit.
-            old_string: String to find and replace.
-            new_string: Replacement string.
-            replace_all: If True, replace all occurrences.
-
-        Returns:
-            Tuple of (updated_file_data, success_message) on success,
-            or error string on failure.
-        """
-        content = _file_data_to_string(file_data)
-        occurrences = content.count(old_string)
-        if occurrences == 0:
-            return f"Error: String not found in file: '{old_string}'"
-        if occurrences > 1 and not replace_all:
-            return f"Error: String '{old_string}' appears {occurrences} times in file. Use replace_all=True to replace all instances, or provide a more specific string with surrounding context."
-        new_content = content.replace(old_string, new_string)
-        new_file_data = _update_file_data(file_data, new_content)
-        result_msg = f"Successfully replaced {occurrences} instance(s) of the string"
-        return new_file_data, result_msg
-
     @tool(description=tool_description)
     def edit_file(
         file_path: str,
@@ -535,28 +382,7 @@ def _edit_file_tool_generator(
         replace_all: bool = False,
     ) -> Command | str:
         file_path = _validate_path(file_path)
-        file_data = backend.get(file_path)
-        if file_data is None:
-            return f"Error: File '{file_path}' not found"
-
-        result = _perform_file_edit(file_data, old_string, new_string, replace_all=replace_all)
-        if isinstance(result, str):
-            return result
-
-        new_file_data, result_msg = result
-        full_msg = f"{result_msg} in '{file_path}'"
-
-        put_result = backend.put(file_path, new_file_data)
-        
-        if isinstance(put_result, Command):
-            return Command(
-                update={
-                    **put_result.update,
-                    "messages": [ToolMessage(full_msg, tool_call_id=runtime.tool_call_id)],
-                }
-            )
-        else:
-            return full_msg
+        return backend.edit(file_path, old_string, new_string, replace_all=replace_all)
 
     return edit_file
 

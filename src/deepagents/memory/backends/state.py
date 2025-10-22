@@ -6,6 +6,14 @@ from langgraph.runtime import get_runtime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from .utils import (
+    create_file_data,
+    update_file_data,
+    file_data_to_string,
+    format_read_response,
+    perform_string_replacement,
+)
+
 
 class StateBackend:
     """Backend that stores files in agent state (ephemeral).
@@ -27,46 +35,6 @@ class StateBackend:
     def get_system_prompt_addition(self) -> Optional[str]:
         """No system prompt addition needed for StateBackend."""
         return None
-
-    def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Get file from state.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-        
-        Returns:
-            FileData dict or None if not found.
-        """
-        runtime = get_runtime()
-        files = runtime.state.get("files", {})
-        return files.get(key)
-    
-    def put(self, key: str, value: dict[str, Any]) -> Command:
-        """Store file in state via Command.
-        
-        Returns Command to update state, not None like other backends.
-        This is required for LangGraph's state management.
-        
-        Args:
-            key: File path (e.g., "/notes.txt")
-            value: FileData dict
-        
-        Returns:
-            Command object to update state.
-        """
-        runtime = get_runtime()
-        tool_call_id = runtime.tool_call_id
-        return Command(
-            update={
-                "files": {key: value},
-                "messages": [
-                    ToolMessage(
-                        content=f"Updated file {key}",
-                        tool_call_id=tool_call_id,
-                    )
-                ],
-            }
-        )
     
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from state.
@@ -86,11 +54,118 @@ class StateBackend:
         
         return keys
     
-    def delete(self, key: str) -> Command:
+    def read(
+        self, 
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content with line numbers.
+        
+        Args:
+            file_path: Absolute file path
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
+        
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        runtime = get_runtime()
+        files = runtime.state.get("files", {})
+        file_data = files.get(file_path)
+        
+        if file_data is None:
+            return f"Error: File '{file_path}' not found"
+        
+        return format_read_response(file_data, offset, limit)
+    
+    def write(
+        self, 
+        file_path: str,
+        content: str,
+    ) -> Command | str:
+        """Create a new file with content.
+        
+        Args:
+            file_path: Absolute file path
+            content: File content as a string
+        
+        Returns:
+            Command object to update state, or error message if file exists.
+        """
+        runtime = get_runtime()
+        files = runtime.state.get("files", {})
+        
+        if file_path in files:
+            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+        
+        new_file_data = create_file_data(content)
+        tool_call_id = runtime.tool_call_id
+        
+        return Command(
+            update={
+                "files": {file_path: new_file_data},
+                "messages": [
+                    ToolMessage(
+                        content=f"Updated file {file_path}",
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
+        )
+    
+    def edit(
+        self, 
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file by replacing string occurrences.
+        
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences
+        
+        Returns:
+            Command object to update state, or error message on failure.
+        """
+        runtime = get_runtime()
+        files = runtime.state.get("files", {})
+        file_data = files.get(file_path)
+        
+        if file_data is None:
+            return f"Error: File '{file_path}' not found"
+        
+        content = file_data_to_string(file_data)
+        result = perform_string_replacement(content, old_string, new_string, replace_all)
+        
+        if isinstance(result, str):
+            return result
+        
+        new_content, occurrences = result
+        new_file_data = update_file_data(file_data, new_content)
+        tool_call_id = runtime.tool_call_id
+        
+        return Command(
+            update={
+                "files": {file_path: new_file_data},
+                "messages": [
+                    ToolMessage(
+                        content=f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'",
+                        tool_call_id=tool_call_id,
+                    )
+                ],
+            }
+        )
+    
+    def delete(self, file_path: str) -> Command | None:
         """Delete file from state via Command.
         
         Args:
-            key: File path to delete
+            file_path: File path to delete
         
         Returns:
             Command object to update state (sets file to None for deletion).
@@ -99,10 +174,10 @@ class StateBackend:
         tool_call_id = runtime.tool_call_id
         return Command(
             update={
-                "files": {key: None},
+                "files": {file_path: None},
                 "messages": [
                     ToolMessage(
-                        content=f"Deleted file {key}",
+                        content=f"Deleted file {file_path}",
                         tool_call_id=tool_call_id,
                     )
                 ],

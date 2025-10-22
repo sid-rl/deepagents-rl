@@ -3,6 +3,7 @@
 from typing import Any, Optional
 
 from deepagents.memory.protocol import MemoryBackend
+from langgraph.types import Command
 
 
 class CompositeBackend:
@@ -101,31 +102,6 @@ class CompositeBackend:
         
         return self.default, key
     
-    def get(self, key: str) -> Optional[dict[str, Any]]:
-        """Get file, routing to appropriate backend.
-        
-        Args:
-            key: File path (e.g., "/memories/notes.txt")
-        
-        Returns:
-            FileData dict or None if not found.
-        """
-        backend, stripped_key = self._get_backend_and_key(key)
-        return backend.get(stripped_key)
-    
-    def put(self, key: str, value: dict[str, Any]) -> Any:
-        """Store file, routing to appropriate backend.
-        
-        Args:
-            key: File path
-            value: FileData dict
-        
-        Returns:
-            Return value from backend (None, Command, or str).
-        """
-        backend, stripped_key = self._get_backend_and_key(key)
-        return backend.put(stripped_key, value)
-    
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from all backends, with appropriate prefixes.
         
@@ -165,14 +141,71 @@ class CompositeBackend:
         
         return result
     
-    def delete(self, key: str) -> Any:
+    def read(
+        self, 
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read file content, routing to appropriate backend.
+        
+        Args:
+            file_path: Absolute file path
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
+        
+        Returns:
+            Formatted file content with line numbers, or error message.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.read(stripped_key, offset=offset, limit=limit)
+    
+    def write(
+        self, 
+        file_path: str,
+        content: str,
+    ) -> Command | str:
+        """Create a new file, routing to appropriate backend.
+        
+        Args:
+            file_path: Absolute file path
+            content: File content as a string
+        
+        Returns:
+            Success message or Command object, or error if file already exists.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.write(stripped_key, content)
+    
+    def edit(
+        self, 
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file, routing to appropriate backend.
+        
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences
+        
+        Returns:
+            Success message or Command object, or error message on failure.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+    
+    def delete(self, file_path: str) -> Command | None:
         """Delete file, routing to appropriate backend.
         
         Args:
-            key: File path to delete
+            file_path: File path to delete
         
         Returns:
-            Return value from backend (None, Command, or str).
+            Return value from backend (None or Command).
         """
-        backend, stripped_key = self._get_backend_and_key(key)
+        backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.delete(stripped_key)
