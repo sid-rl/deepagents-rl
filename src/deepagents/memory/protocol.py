@@ -114,3 +114,37 @@ class MemoryBackend(Protocol):
             - Command object for StateBackend (uses_state=True) to update LangGraph state
         """
         ...
+    
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        include: Optional[str] = None,
+        output_mode: str = "files_with_matches",
+    ) -> str:
+        """Search for a pattern in files.
+        
+        Args:
+            pattern: String pattern to search for
+            path: Path to search in (default "/")
+            include: Optional glob pattern to filter files (e.g., "*.py")
+            output_mode: Output format - "files_with_matches", "content", or "count"
+                - files_with_matches: List file paths that contain matches
+                - content: Show matching lines with file paths and line numbers
+                - count: Show count of matches per file
+        
+        Returns:
+            Formatted search results based on output_mode, or message if no matches found.
+        """
+        ...
+    
+    def glob(self, pattern: str) -> list[str]:
+        """Find files matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+        
+        Returns:
+            List of absolute file paths matching the pattern.
+        """
+        ...

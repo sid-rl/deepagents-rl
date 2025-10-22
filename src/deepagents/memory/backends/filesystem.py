@@ -1,10 +1,14 @@
 """FilesystemBackend: Read and write files directly from the filesystem."""
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 from langgraph.types import Command
+
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
 
 from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement
 
@@ -48,12 +52,13 @@ class FilesystemBackend:
             return path
         return self.cwd / path
 
-    def ls(self, prefix: Optional[str] = None) -> list[str]:
+    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """List files from filesystem.
 
         Args:
             prefix: Optional directory path to list files from (absolute or relative to cwd).
                    Defaults to current working directory if not provided.
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
 
         Returns:
             List of absolute file paths.
@@ -102,6 +107,7 @@ class FilesystemBackend:
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content with line numbers.
         
@@ -109,6 +115,7 @@ class FilesystemBackend:
             file_path: Absolute or relative file path
             offset: Line offset to start reading from (0-indexed)
             limit: Maximum number of lines to read
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
         
         Returns:
             Formatted file content with line numbers, or error message.
@@ -142,12 +149,14 @@ class FilesystemBackend:
         self, 
         file_path: str,
         content: str,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file with content.
         
         Args:
             file_path: Absolute or relative file path
             content: File content as a string
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
         
         Returns:
             Success message or error if file already exists.
@@ -174,6 +183,7 @@ class FilesystemBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
         
@@ -182,6 +192,7 @@ class FilesystemBackend:
             old_string: String to find and replace
             new_string: Replacement string
             replace_all: If True, replace all occurrences
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
         
         Returns:
             Success message or error message on failure.
@@ -209,11 +220,12 @@ class FilesystemBackend:
         except (OSError, UnicodeDecodeError, UnicodeEncodeError) as e:
             return f"Error editing file '{file_path}': {e}"
 
-    def delete(self, file_path: str) -> Command | None:
+    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
         """Delete file from filesystem.
 
         Args:
             file_path: File path to delete (absolute or relative to cwd)
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
         
         Returns:
             None (direct filesystem modification)
@@ -224,3 +236,115 @@ class FilesystemBackend:
             resolved_path.unlink()
         
         return None
+    
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        include: Optional[str] = None,
+        output_mode: str = "files_with_matches",
+        runtime: Optional["ToolRuntime"] = None,
+    ) -> str:
+        """Search for a pattern in files.
+        
+        Args:
+            pattern: String pattern to search for
+            path: Path to search in (default "/")
+            include: Optional glob pattern to filter files (e.g., "*.py")
+            output_mode: Output format - "files_with_matches", "content", or "count"
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
+        
+        Returns:
+            Formatted search results based on output_mode.
+        """
+        regex = re.compile(re.escape(pattern))
+        
+        if include:
+            files_to_search = self.glob(include, runtime=runtime)
+        else:
+            files_to_search = self.ls(path if path != "/" else None, runtime=runtime)
+        
+        if path != "/":
+            files_to_search = [f for f in files_to_search if f.startswith(path)]
+        
+        file_matches = {}
+        
+        for fp in files_to_search:
+            resolved_path = self._resolve_path(fp)
+            
+            if not resolved_path.exists() or not resolved_path.is_file():
+                continue
+            
+            try:
+                with open(resolved_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                
+                matches = []
+                for line_num, line in enumerate(lines, start=1):
+                    if regex.search(line):
+                        matches.append((line_num, line.rstrip()))
+                
+                if matches:
+                    file_matches[fp] = matches
+            except (OSError, UnicodeDecodeError):
+                continue
+        
+        if not file_matches:
+            return f"No matches found for pattern: '{pattern}'"
+        
+        if output_mode == "files_with_matches":
+            return "\n".join(sorted(file_matches.keys()))
+        elif output_mode == "count":
+            results = []
+            for fp in sorted(file_matches.keys()):
+                count = len(file_matches[fp])
+                results.append(f"{fp}: {count}")
+            return "\n".join(results)
+        else:
+            results = []
+            for fp in sorted(file_matches.keys()):
+                results.append(f"{fp}:")
+                for line_num, line in file_matches[fp]:
+                    results.append(f"  {line_num}: {line}")
+            return "\n".join(results)
+    
+    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+        """Find files matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            runtime: Optional ToolRuntime (ignored by FilesystemBackend).
+        
+        Returns:
+            List of absolute file paths matching the pattern.
+        """
+        if pattern.startswith("/"):
+            pattern = pattern.lstrip("/")
+        
+        results = []
+        search_path = self.cwd
+        
+        try:
+            for path in search_path.glob(pattern):
+                if path.is_file():
+                    abs_path = str(path)
+                    if not self.virtual_mode:
+                        results.append(abs_path)
+                        continue
+                    
+                    cwd_str = str(self.cwd)
+                    if not cwd_str.endswith("/"):
+                        cwd_str += "/"
+                    
+                    if abs_path.startswith(cwd_str):
+                        relative_path = abs_path[len(cwd_str):]
+                    elif abs_path.startswith(str(self.cwd)):
+                        relative_path = abs_path[len(str(self.cwd)):].lstrip("/")
+                    else:
+                        relative_path = abs_path
+                    
+                    results.append("/" + relative_path)
+        except (OSError, ValueError):
+            pass
+        
+        return sorted(results)

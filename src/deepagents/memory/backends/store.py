@@ -1,11 +1,13 @@
 """StoreBackend: Adapter for LangGraph's BaseStore (persistent, cross-thread)."""
 
-from typing import Any, Optional
+import re
+from typing import Any, Optional, TYPE_CHECKING
 
-from langchain.tools import ToolRuntime
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
+
 from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
-from langgraph.runtime import get_runtime
 from langgraph.types import Command
 
 from deepagents.memory.backends.utils import (
@@ -26,16 +28,22 @@ class StoreBackend:
     The namespace can include an optional assistant_id for multi-agent isolation.
     """
 
-    def _get_store(self) -> BaseStore:
+    def _get_store(self, runtime: Optional["ToolRuntime"] = None) -> BaseStore:
         """Get the store instance.
+        
+        Args:
+            runtime: ToolRuntime to access store.
         
         Returns:
             BaseStore instance
         
         Raises:
-            ValueError: If no store is available
+            ValueError: If no store is available or runtime not provided
         """
-        store = get_runtime().store
+        if runtime is None:
+            msg = "StoreBackend requires runtime parameter"
+            raise ValueError(msg)
+        store = runtime.store
         if store is None:
             msg = "Store is required but not available in runtime"
             raise ValueError(msg)
@@ -102,16 +110,17 @@ class StoreBackend:
             "modified_at": file_data["modified_at"],
         }
     
-    def ls(self, prefix: Optional[str] = None) -> list[str]:
+    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """List files from store.
         
         Args:
             prefix: Optional path prefix to filter results.
+            runtime: ToolRuntime to access store.
         
         Returns:
             List of file paths.
         """
-        store = self._get_store()
+        store = self._get_store(runtime)
         namespace = self._get_namespace()
         
         # Search store with optional prefix filter
@@ -124,18 +133,20 @@ class StoreBackend:
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content with line numbers.
         
         Args:
             file_path: Absolute file path
             offset: Line offset to start reading from (0-indexed)
+            runtime: ToolRuntime to access store.
             limit: Maximum number of lines to read
         
         Returns:
             Formatted file content with line numbers, or error message.
         """
-        store = self._get_store()
+        store = self._get_store(runtime)
         namespace = self._get_namespace()
         item: Optional[Item] = store.get(namespace, file_path)
         
@@ -153,17 +164,19 @@ class StoreBackend:
         self, 
         file_path: str,
         content: str,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file with content.
         
         Args:
             file_path: Absolute file path
             content: File content as a string
+            runtime: ToolRuntime to access store.
         
         Returns:
             Success message or error if file already exists.
         """
-        store = self._get_store()
+        store = self._get_store(runtime)
         namespace = self._get_namespace()
         
         # Check if file exists
@@ -184,6 +197,7 @@ class StoreBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
         
@@ -192,11 +206,12 @@ class StoreBackend:
             old_string: String to find and replace
             new_string: Replacement string
             replace_all: If True, replace all occurrences
+            runtime: ToolRuntime to access store.
         
         Returns:
             Success message or error message on failure.
         """
-        store = self._get_store()
+        store = self._get_store(runtime)
         namespace = self._get_namespace()
         
         # Get existing file
@@ -224,17 +239,125 @@ class StoreBackend:
         
         return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
     
-    def delete(self, file_path: str) -> Command | None:
+    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
         """Delete file from store.
         
         Args:
             file_path: File path to delete
+            runtime: ToolRuntime to access store.
         
         Returns:
             None (direct store modification)
         """
-        store = self._get_store()
+        store = self._get_store(runtime)
         namespace = self._get_namespace()
         store.delete(namespace, file_path)
         
         return None
+    
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        include: Optional[str] = None,
+        output_mode: str = "files_with_matches",
+        runtime: Optional["ToolRuntime"] = None,
+    ) -> str:
+        """Search for a pattern in files.
+        
+        Args:
+            pattern: String pattern to search for
+            path: Path to search in (default "/")
+            include: Optional glob pattern to filter files (e.g., "*.py")
+            output_mode: Output format - "files_with_matches", "content", or "count"
+            runtime: ToolRuntime to access store.
+        
+        Returns:
+            Formatted search results based on output_mode.
+        """
+        store = self._get_store(runtime)
+        namespace = self._get_namespace()
+        
+        regex = re.compile(re.escape(pattern))
+        
+        if include:
+            files_to_search_list = self.glob(include, runtime=runtime)
+            items = [store.get(namespace, fp) for fp in files_to_search_list]
+            items = [item for item in items if item is not None]
+        else:
+            items = store.search(namespace)
+        
+        if path != "/":
+            items = [item for item in items if item.key.startswith(path)]
+        
+        file_matches = {}
+        
+        for item in items:
+            if item is None:
+                continue
+            
+            try:
+                file_data = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+            
+            content = file_data_to_string(file_data)
+            lines = content.splitlines()
+            
+            matches = []
+            for line_num, line in enumerate(lines, start=1):
+                if regex.search(line):
+                    matches.append((line_num, line.rstrip()))
+            
+            if matches:
+                file_matches[item.key] = matches
+        
+        if not file_matches:
+            return f"No matches found for pattern: '{pattern}'"
+        
+        if output_mode == "files_with_matches":
+            return "\n".join(sorted(file_matches.keys()))
+        elif output_mode == "count":
+            results = []
+            for fp in sorted(file_matches.keys()):
+                count = len(file_matches[fp])
+                results.append(f"{fp}: {count}")
+            return "\n".join(results)
+        else:
+            results = []
+            for fp in sorted(file_matches.keys()):
+                results.append(f"{fp}:")
+                for line_num, line in file_matches[fp]:
+                    results.append(f"  {line_num}: {line}")
+            return "\n".join(results)
+    
+    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+        """Find files matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            runtime: ToolRuntime to access store.
+        
+        Returns:
+            List of absolute file paths matching the pattern.
+        """
+        from fnmatch import fnmatch
+        
+        store = self._get_store(runtime)
+        namespace = self._get_namespace()
+        
+        if pattern.startswith("/"):
+            pattern_stripped = pattern.lstrip("/")
+        else:
+            pattern_stripped = pattern
+        
+        items = store.search(namespace)
+        
+        results = []
+        for item in items:
+            fp = item.key
+            fp_stripped = fp.lstrip("/")
+            if fnmatch(fp_stripped, pattern_stripped):
+                results.append(fp)
+        
+        return sorted(results)

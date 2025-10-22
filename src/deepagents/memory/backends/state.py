@@ -1,8 +1,11 @@
 """StateBackend: Store files in LangGraph agent state (ephemeral)."""
 
-from typing import Any, Optional
+import re
+from typing import Any, Optional, TYPE_CHECKING
 
-from langgraph.runtime import get_runtime
+if TYPE_CHECKING:
+    from langchain.tools import ToolRuntime
+
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
@@ -25,18 +28,22 @@ class StateBackend:
     Special handling: Since LangGraph state must be updated via Command objects
     (not direct mutation), put() operations return Command objects instead of None.
     This is indicated by the uses_state=True flag.
+    
+    Note: All methods require a runtime parameter to access state.
     """
     
-    def ls(self, prefix: Optional[str] = None) -> list[str]:
+    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """List files from state.
         
         Args:
             prefix: Optional path prefix to filter results.
+            runtime: ToolRuntime to access state.
         
         Returns:
             List of file paths.
         """
-        runtime = get_runtime()
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         keys = list(files.keys())
         
@@ -50,6 +57,7 @@ class StateBackend:
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content with line numbers.
         
@@ -57,11 +65,13 @@ class StateBackend:
             file_path: Absolute file path
             offset: Line offset to start reading from (0-indexed)
             limit: Maximum number of lines to read
+            runtime: ToolRuntime to access state.
         
         Returns:
             Formatted file content with line numbers, or error message.
         """
-        runtime = get_runtime()
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         file_data = files.get(file_path)
         
@@ -74,17 +84,20 @@ class StateBackend:
         self, 
         file_path: str,
         content: str,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file with content.
         
         Args:
             file_path: Absolute file path
             content: File content as a string
+            runtime: ToolRuntime to access state.
         
         Returns:
             Command object to update state, or error message if file exists.
         """
-        runtime = get_runtime()
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         
         if file_path in files:
@@ -111,6 +124,7 @@ class StateBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
+        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
         
@@ -119,11 +133,13 @@ class StateBackend:
             old_string: String to find and replace
             new_string: Replacement string
             replace_all: If True, replace all occurrences
+            runtime: ToolRuntime to access state.
         
         Returns:
             Command object to update state, or error message on failure.
         """
-        runtime = get_runtime()
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         file_data = files.get(file_path)
         
@@ -152,16 +168,18 @@ class StateBackend:
             }
         )
     
-    def delete(self, file_path: str) -> Command | None:
+    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
         """Delete file from state via Command.
         
         Args:
             file_path: File path to delete
+            runtime: ToolRuntime to access state.
         
         Returns:
             Command object to update state (sets file to None for deletion).
         """
-        runtime = get_runtime()
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
         tool_call_id = runtime.tool_call_id
         return Command(
             update={
@@ -174,3 +192,103 @@ class StateBackend:
                 ],
             }
         )
+    
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        include: Optional[str] = None,
+        output_mode: str = "files_with_matches",
+        runtime: Optional["ToolRuntime"] = None,
+    ) -> str:
+        """Search for a pattern in files.
+        
+        Args:
+            pattern: String pattern to search for
+            path: Path to search in (default "/")
+            include: Optional glob pattern to filter files (e.g., "*.py")
+            output_mode: Output format - "files_with_matches", "content", or "count"
+            runtime: ToolRuntime to access state.
+        
+        Returns:
+            Formatted search results based on output_mode.
+        """
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
+        files = runtime.state.get("files", {})
+        
+        regex = re.compile(re.escape(pattern))
+        
+        if include:
+            files_to_search_list = self.glob(include, runtime=runtime)
+            files_to_search = {fp: files.get(fp) for fp in files_to_search_list if fp in files}
+        else:
+            files_to_search = files
+        
+        if path != "/":
+            files_to_search = {fp: data for fp, data in files_to_search.items() if fp.startswith(path)}
+        
+        file_matches = {}
+        
+        for fp, file_data in files_to_search.items():
+            if file_data is None:
+                continue
+            
+            content = file_data_to_string(file_data)
+            lines = content.splitlines()
+            
+            matches = []
+            for line_num, line in enumerate(lines, start=1):
+                if regex.search(line):
+                    matches.append((line_num, line.rstrip()))
+            
+            if matches:
+                file_matches[fp] = matches
+        
+        if not file_matches:
+            return f"No matches found for pattern: '{pattern}'"
+        
+        if output_mode == "files_with_matches":
+            return "\n".join(sorted(file_matches.keys()))
+        elif output_mode == "count":
+            results = []
+            for fp in sorted(file_matches.keys()):
+                count = len(file_matches[fp])
+                results.append(f"{fp}: {count}")
+            return "\n".join(results)
+        else:
+            results = []
+            for fp in sorted(file_matches.keys()):
+                results.append(f"{fp}:")
+                for line_num, line in file_matches[fp]:
+                    results.append(f"  {line_num}: {line}")
+            return "\n".join(results)
+    
+    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+        """Find files matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            runtime: ToolRuntime to access state.
+        
+        Returns:
+            List of absolute file paths matching the pattern.
+        """
+        from fnmatch import fnmatch
+        
+        if runtime is None:
+            raise ValueError("StateBackend requires runtime parameter")
+        files = runtime.state.get("files", {})
+        
+        if pattern.startswith("/"):
+            pattern_stripped = pattern.lstrip("/")
+        else:
+            pattern_stripped = pattern
+        
+        results = []
+        for fp in files.keys():
+            fp_stripped = fp.lstrip("/")
+            if fnmatch(fp_stripped, pattern_stripped):
+                results.append(fp)
+        
+        return sorted(results)

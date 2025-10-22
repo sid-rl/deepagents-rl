@@ -296,7 +296,7 @@ def _ls_tool_generator(
     @tool(description=tool_description)
     def ls(runtime: ToolRuntime[None, FilesystemState], path: str | None = None) -> list[str]:
         prefix = _validate_path(path) if path is not None else None
-        files = backend.ls(prefix)
+        files = backend.ls(prefix, runtime=runtime)
         return files
 
     return ls
@@ -325,7 +325,7 @@ def _read_file_tool_generator(
         limit: int = DEFAULT_READ_LIMIT,
     ) -> str:
         file_path = _validate_path(file_path)
-        return backend.read(file_path, offset=offset, limit=limit)
+        return backend.read(file_path, offset=offset, limit=limit, runtime=runtime)
 
     return read_file
 
@@ -352,7 +352,7 @@ def _write_file_tool_generator(
         runtime: ToolRuntime[None, FilesystemState],
     ) -> Command | str:
         file_path = _validate_path(file_path)
-        return backend.write(file_path, content)
+        return backend.write(file_path, content, runtime=runtime)
 
     return write_file
 
@@ -382,7 +382,7 @@ def _edit_file_tool_generator(
         replace_all: bool = False,
     ) -> Command | str:
         file_path = _validate_path(file_path)
-        return backend.edit(file_path, old_string, new_string, replace_all=replace_all)
+        return backend.edit(file_path, old_string, new_string, replace_all=replace_all, runtime=runtime)
 
     return edit_file
 
