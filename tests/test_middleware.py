@@ -9,6 +9,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langgraph.graph.message import add_messages
+from langgraph.store.memory import InMemoryStore
 
 from deepagents.middleware.filesystem import (
     FILESYSTEM_SYSTEM_PROMPT,
@@ -16,6 +17,7 @@ from deepagents.middleware.filesystem import (
     FileData,
     FilesystemMiddleware,
     FilesystemState,
+    _search_store_paginated,
 )
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
@@ -521,6 +523,113 @@ class TestFilesystemMiddleware:
             }
         )
         assert "Invalid regex pattern" in result
+
+    def test_search_store_paginated_empty(self):
+        """Test pagination with no items."""
+        store = InMemoryStore()
+        result = _search_store_paginated(store, ("filesystem",))
+        assert result == []
+
+    def test_search_store_paginated_less_than_page_size(self):
+        """Test pagination with fewer items than page size."""
+        store = InMemoryStore()
+        for i in range(5):
+            store.put(
+                ("filesystem",),
+                f"/file{i}.txt",
+                {
+                    "content": [f"content {i}"],
+                    "created_at": "2021-01-01",
+                    "modified_at": "2021-01-01",
+                },
+            )
+
+        result = _search_store_paginated(store, ("filesystem",), page_size=10)
+        assert len(result) == 5
+        # Check that all files are present (order may vary)
+        keys = {item.key for item in result}
+        assert keys == {f"/file{i}.txt" for i in range(5)}
+
+    def test_search_store_paginated_exact_page_size(self):
+        """Test pagination with exactly one page of items."""
+        store = InMemoryStore()
+        for i in range(10):
+            store.put(
+                ("filesystem",),
+                f"/file{i}.txt",
+                {
+                    "content": [f"content {i}"],
+                    "created_at": "2021-01-01",
+                    "modified_at": "2021-01-01",
+                },
+            )
+
+        result = _search_store_paginated(store, ("filesystem",), page_size=10)
+        assert len(result) == 10
+        keys = {item.key for item in result}
+        assert keys == {f"/file{i}.txt" for i in range(10)}
+
+    def test_search_store_paginated_multiple_pages(self):
+        """Test pagination with multiple pages of items."""
+        store = InMemoryStore()
+        for i in range(250):
+            store.put(
+                ("filesystem",),
+                f"/file{i}.txt",
+                {
+                    "content": [f"content {i}"],
+                    "created_at": "2021-01-01",
+                    "modified_at": "2021-01-01",
+                },
+            )
+
+        result = _search_store_paginated(store, ("filesystem",), page_size=100)
+        assert len(result) == 250
+        keys = {item.key for item in result}
+        assert keys == {f"/file{i}.txt" for i in range(250)}
+
+    def test_search_store_paginated_with_filter(self):
+        """Test pagination with filter parameter."""
+        store = InMemoryStore()
+        for i in range(20):
+            store.put(
+                ("filesystem",),
+                f"/file{i}.txt",
+                {
+                    "content": [f"content {i}"],
+                    "created_at": "2021-01-01",
+                    "modified_at": "2021-01-01",
+                    "type": "test" if i % 2 == 0 else "other",
+                },
+            )
+
+        # Filter for type="test" (every other item, so 10 items)
+        result = _search_store_paginated(store, ("filesystem",), filter={"type": "test"}, page_size=5)
+        assert len(result) == 10
+        # Verify all returned items have type="test"
+        for item in result:
+            assert item.value.get("type") == "test"
+
+    def test_search_store_paginated_custom_page_size(self):
+        """Test pagination with custom page size."""
+        store = InMemoryStore()
+        # Add 55 items
+        for i in range(55):
+            store.put(
+                ("filesystem",),
+                f"/file{i}.txt",
+                {
+                    "content": [f"content {i}"],
+                    "created_at": "2021-01-01",
+                    "modified_at": "2021-01-01",
+                },
+            )
+
+        result = _search_store_paginated(store, ("filesystem",), page_size=20)
+        # Should make 3 calls: 20, 20, 15
+        assert len(result) == 55
+        keys = {item.key for item in result}
+        assert keys == {f"/file{i}.txt" for i in range(55)}
 
 
 @pytest.mark.requires("langchain_openai")

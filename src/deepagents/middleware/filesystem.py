@@ -544,6 +544,58 @@ def _get_store(runtime: ToolRuntime[None, FilesystemState]) -> BaseStore:
     return runtime.store
 
 
+def _search_store_paginated(
+    store: BaseStore,
+    namespace: tuple[str, ...],
+    *,
+    query: str | None = None,
+    filter: dict[str, Any] | None = None,
+    page_size: int = 100,
+) -> list[Item]:
+    """Search store with automatic pagination to retrieve all results.
+
+    Args:
+        store: The store to search.
+        namespace: Hierarchical path prefix to search within.
+        query: Optional query for natural language search.
+        filter: Key-value pairs to filter results.
+        page_size: Number of items to fetch per page (default: 100).
+
+    Returns:
+        List of all items matching the search criteria.
+
+    Example:
+        ```python
+        store = _get_store(runtime)
+        namespace = _get_namespace()
+        all_items = _search_store_paginated(store, namespace)
+        ```
+    """
+    all_items: list[Item] = []
+    offset = 0
+
+    while True:
+        page_items = store.search(
+            namespace,
+            query=query,
+            filter=filter,
+            limit=page_size,
+            offset=offset,
+        )
+
+        if not page_items:
+            break
+
+        all_items.extend(page_items)
+
+        if len(page_items) < page_size:
+            break
+
+        offset += page_size
+
+    return all_items
+
+
 def _convert_store_item_to_file_data(store_item: Item) -> FileData:
     """Convert a store Item to FileData format.
 
@@ -761,7 +813,7 @@ def _ls_tool_generator(custom_description: str | None = None, *, long_term_memor
             # Add filenames from longterm memory
             store = _get_store(runtime)
             namespace = _get_namespace()
-            longterm_files = store.search(namespace)
+            longterm_files = _search_store_paginated(store, namespace)
             longterm_files_prefixed = [_append_memories_prefix(f.key) for f in longterm_files]
             files.extend(longterm_files_prefixed)
             return _filter_files_by_path(files, path)
@@ -1098,7 +1150,7 @@ def _glob_search_tool_generator(custom_description: str | None = None, *, long_t
             # Merge in files from store
             store = _get_store(runtime)
             namespace = _get_namespace()
-            longterm_items = store.search(namespace)
+            longterm_items = _search_store_paginated(store, namespace)
             for item in longterm_items:
                 prefixed_path = _append_memories_prefix(item.key)
                 files[prefixed_path] = _convert_store_item_to_file_data(item)
@@ -1149,7 +1201,7 @@ def _grep_search_tool_generator(custom_description: str | None = None, *, long_t
             # Merge in files from store
             store = _get_store(runtime)
             namespace = _get_namespace()
-            longterm_items = store.search(namespace)
+            longterm_items = _search_store_paginated(store, namespace)
             for item in longterm_items:
                 prefixed_path = _append_memories_prefix(item.key)
                 files[prefixed_path] = _convert_store_item_to_file_data(item)
