@@ -517,9 +517,17 @@ async def main(agent_name: str, no_memory: bool):
         tools.append(web_search)
 
     from deepagents.memory.backends.filesystem import FilesystemBackend
+    from pathlib import Path
 
     backend = FilesystemBackend()
-    long_term_backend = FilesystemBackend()
+    
+    # For long-term memory, point to ~/.deepagents/AGENT_NAME/ directory
+    if assistant_id:
+        longterm_root = Path.home() / ".deepagents" / assistant_id
+        longterm_root.mkdir(parents=True, exist_ok=True)
+        long_term_backend = FilesystemBackend(root_dir=longterm_root)
+    else:
+        long_term_backend = FilesystemBackend()
     
     # Always use default instructions - middleware handles agent.md loading
     agent = create_deep_agent(

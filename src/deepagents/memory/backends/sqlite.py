@@ -40,7 +40,11 @@ class SQLiteBackend:
     def uses_state(self) -> bool:
         """False for SQLiteBackend - stores directly to database."""
         return False
-    
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """No system prompt addition needed for SQLiteBackend."""
+        return None
+
     def _init_db(self) -> None:
         """Initialize database schema."""
         with sqlite3.connect(self.db_path) as conn:

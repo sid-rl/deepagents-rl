@@ -30,7 +30,11 @@ class StoreBackend:
     def uses_state(self) -> bool:
         """False for StoreBackend - modifies external storage directly."""
         return False
-    
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """No system prompt addition needed for StoreBackend."""
+        return None
+
     def _get_store(self) -> BaseStore:
         """Get the store instance.
         

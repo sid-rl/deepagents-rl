@@ -11,10 +11,10 @@ from typing import Any, Optional, Protocol, Union, runtime_checkable
 @runtime_checkable
 class MemoryBackend(Protocol):
     """Protocol for pluggable memory backends.
-    
+
     Backends can store files in different locations (state, filesystem, database, etc.)
     and provide a uniform interface for file operations.
-    
+
     All file data is represented as dicts with the following structure:
     {
         "content": list[str],      # Lines of text content
@@ -22,16 +22,27 @@ class MemoryBackend(Protocol):
         "modified_at": str,        # ISO format timestamp
     }
     """
-    
+
     @property
     def uses_state(self) -> bool:
         """Flag indicating if this backend uses agent state.
-        
+
         When True, put() operations should return Command objects instead of None.
         This is required for backends that store data in LangGraph state, which
         must be updated via Command objects for proper checkpointing.
-        
+
         Default: False (most backends modify external storage directly)
+        """
+        ...
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """Get additional system prompt text for this backend.
+
+        Backends can provide context-specific information to be injected into
+        the system prompt (e.g., current working directory for FilesystemBackend).
+
+        Returns:
+            Optional string to append to system prompt, or None if no addition needed.
         """
         ...
     

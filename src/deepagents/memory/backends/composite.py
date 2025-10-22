@@ -51,13 +51,36 @@ class CompositeBackend:
     @property
     def uses_state(self) -> bool:
         """True if any sub-backend uses state.
-        
+
         This is important for tools to know whether to expect Command returns.
         """
         if getattr(self.default, "uses_state", False):
             return True
         return any(getattr(backend, "uses_state", False) for backend in self.routes.values())
-    
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """Collect system prompt additions from all sub-backends.
+
+        Returns:
+            Combined system prompt additions from all backends, or None if none exist.
+        """
+        additions = []
+
+        # Get from default backend
+        if hasattr(self.default, 'get_system_prompt_addition'):
+            addition = self.default.get_system_prompt_addition()
+            if addition:
+                additions.append(addition)
+
+        # Get from routed backends
+        for route_backend in self.routes.values():
+            if hasattr(route_backend, 'get_system_prompt_addition'):
+                addition = route_backend.get_system_prompt_addition()
+                if addition:
+                    additions.append(addition)
+
+        return "\n\n".join(additions) if additions else None
+
     def _get_backend_and_key(self, key: str) -> tuple[MemoryBackend, str]:
         """Determine which backend handles this key and strip prefix.
         

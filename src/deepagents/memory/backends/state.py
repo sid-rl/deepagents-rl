@@ -23,7 +23,11 @@ class StateBackend:
     def uses_state(self) -> bool:
         """Always True for StateBackend - must return Commands for writes."""
         return True
-    
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """No system prompt addition needed for StateBackend."""
+        return None
+
     def get(self, key: str) -> Optional[dict[str, Any]]:
         """Get file from state.
         

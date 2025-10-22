@@ -14,14 +14,37 @@ class FilesystemBackend:
     as plain text, and metadata (timestamps) are derived from filesystem stats.
     """
 
-    def __init__(self) -> None:
-        """Initialize filesystem backend."""
-        self.cwd = Path.cwd()
+    def __init__(self, root_dir: Optional[str | Path] = None) -> None:
+        """Initialize filesystem backend.
+        
+        Args:
+            root_dir: Optional root directory for file operations. If provided,
+                     all file paths will be resolved relative to this directory.
+                     If not provided, uses the current working directory.
+        """
+        self.cwd = Path(root_dir) if root_dir else Path.cwd()
 
     @property
     def uses_state(self) -> bool:
         """False for FilesystemBackend - stores directly to disk."""
         return False
+
+    def get_system_prompt_addition(self) -> Optional[str]:
+        """Provide CWD information for the system prompt.
+
+        Returns:
+            System prompt text explaining the current working directory.
+        """
+        return f"""
+### Current Working Directory
+
+The filesystem backend is currently operating in: `{self.cwd}`
+
+When using filesystem tools (ls, read_file, write_file, edit_file):
+- Relative paths (e.g., "notes.txt", "data/config.json") will be resolved relative to the current working directory
+- Absolute paths (e.g., "/home/user/file.txt") will be used as-is
+- To list files in the current directory, use `ls()` with no arguments or `ls(".")`
+"""
 
     def _resolve_path(self, key: str) -> Path:
         """Resolve a file path relative to cwd if not absolute.

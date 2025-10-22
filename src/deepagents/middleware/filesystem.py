@@ -669,7 +669,20 @@ class FilesystemMiddleware(AgentMiddleware):
         elif isinstance(self.backend, CompositeBackend):
             self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
 
+        # Add backend-specific system prompt additions
+        backend_prompt_addition = self._get_backend_prompt_addition()
+        if backend_prompt_addition:
+            self.system_prompt += "\n\n" + backend_prompt_addition
+
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
+
+    def _get_backend_prompt_addition(self) -> str | None:
+        """Get system prompt additions from the backend.
+
+        Returns:
+            System prompt addition from backend, or None.
+        """
+        return self.backend.get_system_prompt_addition()
 
     def wrap_model_call(
         self,
