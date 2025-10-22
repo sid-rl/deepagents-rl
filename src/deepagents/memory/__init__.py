@@ -3,7 +3,6 @@
 from deepagents.memory.backends import (
     CompositeBackend,
     FilesystemBackend,
-    SQLiteBackend,
     StateBackend,
     StoreBackend,
 )
@@ -13,7 +12,6 @@ __all__ = [
     "MemoryBackend",
     "CompositeBackend",
     "FilesystemBackend",
-    "SQLiteBackend",
     "StateBackend",
     "StoreBackend",
 ]

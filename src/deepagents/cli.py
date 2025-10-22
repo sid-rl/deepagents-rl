@@ -513,8 +513,12 @@ async def main(assistant_id: str):
 
     # Use the same backend for agent memory middleware
     agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend)]
+    system_prompt = f"""### Current Working Directory
+
+The filesystem backend is currently operating in: `{Path.cwd()}`"""
 
     agent = create_deep_agent(
+        system_prompt=system_prompt,
         tools=tools,
         memory_backend=backend,
         long_term_backend=long_term_backend,

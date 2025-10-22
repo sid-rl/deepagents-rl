@@ -27,15 +27,6 @@ class StateBackend:
     This is indicated by the uses_state=True flag.
     """
     
-    @property
-    def uses_state(self) -> bool:
-        """Always True for StateBackend - must return Commands for writes."""
-        return True
-
-    def get_system_prompt_addition(self) -> Optional[str]:
-        """No system prompt addition needed for StateBackend."""
-        return None
-    
     def ls(self, prefix: Optional[str] = None) -> list[str]:
         """List files from state.
         
