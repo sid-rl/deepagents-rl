@@ -130,11 +130,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """
         # Only load memory if it hasn't been loaded yet
         if "agent_memory" not in state or state.get("agent_memory") is None:
-            file_data = self.backend.get(AGENT_MEMORY_FILE_PATH)
-            if file_data:
-                content = file_data.get("content", [])
-                agent_memory = "\n".join(content)
-                return {"agent_memory": agent_memory}
+            file_data = self.backend.read(AGENT_MEMORY_FILE_PATH)
+            return {"agent_memory": file_data}
 
     async def abefore_agent(
         self,

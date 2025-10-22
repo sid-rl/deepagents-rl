@@ -78,35 +78,32 @@ class CompositeBackend:
         Returns:
             List of file paths with route prefixes added.
         """
-        result: list[str] = []
-        
-        # If prefix matches a route, only query that backend
-        if prefix is not None:
+        if prefix is None:
+            # No filter: query all backends and combine results
+            result: list[str] = []
+            
+            # Get all files from default backend
+            result.extend(self.default.ls(None))
+            
+            # Get all files from each routed backend, adding route prefix
+            for route_prefix, backend in self.routes.items():
+                keys = backend.ls(None)
+                result.extend(f"{route_prefix[:-1]}{key}" for key in keys)
+            
+            return result
+        else:
+            # Prefix provided: determine which backend(s) to query
+            
+            # Check if prefix matches a specific route
             for route_prefix, backend in self.sorted_routes:
                 if prefix.startswith(route_prefix):
-                    # Strip route prefix from search prefix
+                    # Query only the matching routed backend
                     search_prefix = prefix[len(route_prefix) - 1:]
                     keys = backend.ls(search_prefix if search_prefix != "/" else None)
-                    # Add route prefix back to results
-                    result.extend(f"{route_prefix[:-1]}{key}" for key in keys)
-                    return result
-        
-        # Query default backend
-        default_keys = self.default.ls(prefix)
-        result.extend(default_keys)
-        
-        # Query each routed backend
-        for route_prefix, backend in self.routes.items():
-            # Skip if prefix filter doesn't match this route
-            if prefix is not None and not route_prefix.startswith(prefix):
-                continue
+                    return [f"{route_prefix[:-1]}{key}" for key in keys]
             
-            # Get keys from backend (without prefix in search)
-            keys = backend.ls(None)
-            # Add route prefix to each key
-            result.extend(f"{route_prefix[:-1]}{key}" for key in keys)
-        
-        return result
+            # Prefix doesn't match a route: query only default backend
+            return self.default.ls(prefix)
     
     def read(
         self, 
