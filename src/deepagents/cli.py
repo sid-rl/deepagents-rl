@@ -16,11 +16,9 @@ from langgraph.types import Command, Interrupt
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.text import Text
-from rich.live import Live
-from rich.spinner import Spinner
-from rich.prompt import Prompt
+from deepagents.memory.backends.filesystem import FilesystemBackend
+from deepagents.middleware.agent_memory import AgentMemoryMiddleware
+from pathlib import Path
 import shutil
 from rich import box
 
@@ -405,8 +403,8 @@ def reset_agent(agent_name: str, source_agent: str = None):
         action_desc = f"contents of agent '{source_agent}'"
     else:
         # Reset to empty - agent builds their own memory
-        source_content = ""
-        action_desc = "empty (agent will build their own memory)"
+        source_content = get_default_coding_instructions()
+        action_desc = "default"
     
     if agent_dir.exists():
         shutil.rmtree(agent_dir)
@@ -488,59 +486,36 @@ def parse_args():
         help="Agent identifier for separate memory stores (default: agent).",
     )
     
-    parser.add_argument(
-        "--no-memory",
-        action="store_true",
-        help="Disable long-term memory features (no agent.md or /memories/ access).",
-    )
-    
     return parser.parse_args()
 
 
-async def main(agent_name: str, no_memory: bool):
+async def main(assistant_id: str):
     """Main entry point."""
-    # Error if both --agent and --no-memory are specified
-    if agent_name != "agent" and no_memory:
-        console.print("[bold red]Error:[/bold red] Cannot use --agent with --no-memory flag.")
-        console.print("Either specify --agent for memory-enabled mode, or use --no-memory for memory-disabled mode.")
-        return
-    
-    # Disable long-term memory if --no-memory flag is set
-    long_term_memory = not no_memory
-    
-    # If memory is disabled, set assistant_id to None
-    assistant_id = None if no_memory else agent_name
     
     # Create agent with conditional tools
     tools = [http_request]
     if tavily_client is not None:
         tools.append(web_search)
 
-    from deepagents.memory.backends.filesystem import FilesystemBackend
-    from deepagents.middleware.agent_memory import AgentMemoryMiddleware
-    from pathlib import Path
-
     backend = FilesystemBackend()
     
     # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
-    agent_middleware = []
-    if assistant_id:
-        agent_dir = Path.home() / ".deepagents" / assistant_id
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Long-term backend - rooted at agent directory
-        # This handles both /memories/ files and /agent.md
-        long_term_backend = FilesystemBackend(root_dir=agent_dir, prefix_mapping={"/memories/": "~/.deepagents/agent/"})
-        
-        # Use the same backend for agent memory middleware
-        agent_middleware.append(AgentMemoryMiddleware(backend=long_term_backend))
-    else:
-        long_term_backend = FilesystemBackend()
-    
-    # Always use default instructions - middleware handles agent.md loading
+    agent_dir = Path.home() / ".deepagents" / assistant_id
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    agent_md = agent_dir / "agent.md"
+    if not agent_md.exists():
+        source_content = get_default_coding_instructions()
+        agent_md.write_text(source_content)
+
+    # Long-term backend - rooted at agent directory
+    # This handles both /memories/ files and /agent.md
+    long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
+
+    # Use the same backend for agent memory middleware
+    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend)]
+
     agent = create_deep_agent(
         tools=tools,
-        system_prompt=get_default_coding_instructions(),
         memory_backend=backend,
         long_term_backend=long_term_backend,
         middleware=agent_middleware,
@@ -573,7 +548,7 @@ def cli_main():
             console.print("  export ANTHROPIC_API_KEY=your_api_key_here")
             console.print("\nOr add it to your .env file.")
             return
-        asyncio.run(main(args.agent, args.no_memory))
+        asyncio.run(main(args.agent))
 
 
 if __name__ == "__main__":

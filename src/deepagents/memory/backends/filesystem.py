@@ -17,7 +17,7 @@ class FilesystemBackend:
     def __init__(
         self, 
         root_dir: Optional[str | Path] = None,
-        prefix_mapping: Optional[dict[str, str | Path]] = None
+        virtual_mode: bool = False
     ) -> None:
         """Initialize filesystem backend.
         
@@ -25,18 +25,9 @@ class FilesystemBackend:
             root_dir: Optional root directory for file operations. If provided,
                      all file paths will be resolved relative to this directory.
                      If not provided, uses the current working directory.
-            prefix_mapping: Optional mapping of path prefixes to directories.
-                          For example: {"/memories/": "~/.deepagents/agent/"}
-                          When a path starts with a mapped prefix, it will be
-                          resolved to the corresponding directory.
         """
         self.cwd = Path(root_dir) if root_dir else Path.cwd()
-        self.prefix_mapping = {}
-        if prefix_mapping:
-            for prefix, directory in prefix_mapping.items():
-                # Expand user paths like ~
-                expanded_dir = Path(directory).expanduser()
-                self.prefix_mapping[prefix] = expanded_dir
+        self.virtual_mode = virtual_mode
 
     @property
     def uses_state(self) -> bool:
@@ -69,13 +60,8 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
         Returns:
             Resolved absolute Path object
         """
-        # Check if the key matches any prefix mapping
-        for prefix, directory in self.prefix_mapping.items():
-            if key.startswith(prefix):
-                # Remove the prefix and resolve relative to the mapped directory
-                relative_path = key[len(prefix):]
-                return directory / relative_path
-        
+        if self.virtual_mode:
+            return self.cwd / key.lstrip('/')
         path = Path(key)
         if path.is_absolute():
             return path
@@ -151,11 +137,30 @@ When using filesystem tools (ls, read_file, write_file, edit_file):
 
         results: list[str] = []
 
+        # Convert cwd to string for comparison
+        cwd_str = str(self.cwd)
+        if not cwd_str.endswith("/"):
+            cwd_str += "/"
+
         # Walk the directory tree
         try:
             for path in dir_path.rglob("*"):
                 if path.is_file():
-                    results.append(str(path))
+                    abs_path = str(path)
+                    if not self.virtual_mode:
+                        results.append(abs_path)
+                        continue
+                    # Strip the cwd prefix if present
+                    if abs_path.startswith(cwd_str):
+                        relative_path = abs_path[len(cwd_str):]
+                    elif abs_path.startswith(str(self.cwd)):
+                        # Handle case where cwd doesn't end with /
+                        relative_path = abs_path[len(str(self.cwd)):].lstrip("/")
+                    else:
+                        # Path is outside cwd, return as-is or skip
+                        relative_path = abs_path
+
+                    results.append("/" + relative_path)
         except (OSError, PermissionError):
             pass
 

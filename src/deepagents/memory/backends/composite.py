@@ -96,9 +96,8 @@ class CompositeBackend:
             if key.startswith(prefix):
                 # Strip prefix but keep leading slash
                 # e.g., "/memories/notes.txt" → "/notes.txt"
-                # Turn this off for now
-                # stripped_key = key[len(prefix) - 1:] if key[len(prefix) - 1:] else "/"
-                return backend, key
+                stripped_key = key[len(prefix) - 1:] if key[len(prefix) - 1:] else "/"
+                return backend, stripped_key
         
         return self.default, key
     
