@@ -9,7 +9,9 @@ if TYPE_CHECKING:
     from langgraph.runtime import Runtime
 
 import os
+import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from langchain.agents.middleware.types import (
@@ -25,6 +27,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from typing_extensions import TypedDict
+from wcmatch import glob as wcglob
 
 from deepagents.memory.protocol import MemoryBackend
 from deepagents.memory.backends import StateBackend, CompositeBackend
@@ -207,6 +210,147 @@ def _create_file_data(
     }
 
 
+def _format_grep_results(
+    results: dict[str, list[tuple[int, str]]],
+    output_mode: str,
+) -> str:
+    r"""Format grep results based on output mode.
+
+    Args:
+        results: Dictionary mapping file paths to lists of (line_num, line_text) tuples.
+        output_mode: Output format - "files_with_matches", "content", or "count".
+
+    Returns:
+        Formatted search results as a string.
+
+    Example:
+        ```python
+        results = {"/file.py": [(1, "import os"), (5, "import sys")]}
+        _format_grep_results(results, "content")
+        # Returns: "/file.py:1:import os\n/file.py:5:import sys"
+        ```
+    """
+    if output_mode == "files_with_matches":
+        return "\n".join(sorted(results.keys()))
+
+    if output_mode == "content":
+        lines = []
+        for file_path in sorted(results.keys()):
+            for line_num, line in results[file_path]:
+                lines.append(f"{file_path}:{line_num}:{line}")
+        return "\n".join(lines)
+
+    if output_mode == "count":
+        lines = []
+        for file_path in sorted(results.keys()):
+            count = len(results[file_path])
+            lines.append(f"{file_path}:{count}")
+        return "\n".join(lines)
+
+    return "\n".join(sorted(results.keys()))
+
+
+def _glob_search_files(
+    files: dict[str, FileData],
+    pattern: str,
+    path: str = "/",
+) -> str:
+    r"""Search files dict for paths matching glob pattern.
+
+    Args:
+        files: Dictionary of file paths to FileData.
+        pattern: Glob pattern (e.g., "*.py", "**/*.ts").
+        path: Base path to search from.
+
+    Returns:
+        Newline-separated file paths, sorted by modification time (most recent first).
+        Returns "No files found" if no matches.
+
+    Example:
+        ```python
+        files = {"/src/main.py": FileData(...), "/test.py": FileData(...)}
+        _glob_search_files(files, "*.py", "/")
+        # Returns: "/test.py\n/src/main.py" (sorted by modified_at)
+        ```
+    """
+    try:
+        normalized_path = _validate_path(path)
+    except ValueError:
+        return "No files found"
+
+    filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
+
+    matches = []
+    for file_path, file_data in filtered.items():
+        relative = file_path[len(normalized_path) :].lstrip("/")
+        if not relative:
+            relative = file_path.split("/")[-1]
+
+        if wcglob.globmatch(relative, pattern, flags=wcglob.BRACE | wcglob.GLOBSTAR):
+            matches.append((file_path, file_data["modified_at"]))
+
+    matches.sort(key=lambda x: x[1], reverse=True)
+
+    if not matches:
+        return "No files found"
+
+    return "\n".join(fp for fp, _ in matches)
+
+
+def _grep_search_files(
+    files: dict[str, FileData],
+    pattern: str,
+    path: str = "/",
+    include: str | None = None,
+    output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
+) -> str:
+    """Search file contents for regex pattern.
+
+    Args:
+        files: Dictionary of file paths to FileData.
+        pattern: Regex pattern to search for.
+        path: Base path to search from.
+        include: Optional glob pattern to filter files (e.g., "*.py").
+        output_mode: Output format - "files_with_matches", "content", or "count".
+
+    Returns:
+        Formatted search results. Returns "No matches found" if no results.
+
+    Example:
+        ```python
+        files = {"/file.py": FileData(content=["import os", "print('hi')"], ...)}
+        _grep_search_files(files, "import", "/")
+        # Returns: "/file.py" (with output_mode="files_with_matches")
+        ```
+    """
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Invalid regex pattern: {e}"
+
+    try:
+        normalized_path = _validate_path(path)
+    except ValueError:
+        return "No matches found"
+
+    filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
+
+    if include:
+        filtered = {fp: fd for fp, fd in filtered.items() if wcglob.globmatch(Path(fp).name, include, flags=wcglob.BRACE)}
+
+    results: dict[str, list[tuple[int, str]]] = {}
+    for file_path, file_data in filtered.items():
+        for line_num, line in enumerate(file_data["content"], 1):
+            if regex.search(line):
+                if file_path not in results:
+                    results[file_path] = []
+                results[file_path].append((line_num, line))
+
+    if not results:
+        return "No matches found"
+    return _format_grep_results(results, output_mode)
+
+
 class FilesystemState(AgentState):
     """State for the filesystem middleware."""
 
@@ -262,7 +406,41 @@ WRITE_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
     f"\n- file_paths prefixed with the {MEMORIES_PREFIX} path will be written to the longterm filesystem."
 )
 
-FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`
+GLOB_SEARCH_TOOL_DESCRIPTION = """Fast file pattern matching tool.
+
+Supports glob patterns like **/*.js or src/**/*.ts.
+Returns matching file paths sorted by modification time (most recent first).
+Use this tool when you need to find files by name patterns.
+
+Usage:
+- The pattern parameter is a glob pattern to match files against.
+- You can optionally provide a path parameter to search in a specific directory.
+- Returns a newline-separated list of matching file paths.
+- Results are sorted by modification time (most recently modified first).
+"""
+GLOB_SEARCH_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
+    f"\n- Searches both short-term and longterm filesystem. Files from longterm will be prefixed with the {MEMORIES_PREFIX} path."
+)
+
+GREP_SEARCH_TOOL_DESCRIPTION = """Fast content search tool.
+
+Searches file contents using regular expressions. Supports full regex
+syntax and filters files by pattern with the include parameter.
+
+Usage:
+- The pattern parameter is a regular expression to search for in file contents.
+- You can optionally provide a path parameter to search in a specific directory.
+- The include parameter filters files by glob pattern (e.g., "*.js", "*.{ts,tsx}").
+- The output_mode parameter controls the output format:
+  - "files_with_matches": Only file paths containing matches (default)
+  - "content": Matching lines with file:line:content format
+  - "count": Count of matches per file
+"""
+GREP_SEARCH_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
+    f"\n- Searches both short-term and longterm filesystem. Files from longterm will be prefixed with the {MEMORIES_PREFIX} path."
+)
+
+FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`, `glob_search`, `grep_search`
 
 You have access to a filesystem which you can interact with using these tools.
 All file paths must start with a /.
@@ -270,7 +448,9 @@ All file paths must start with a /.
 - ls: list all files in the filesystem
 - read_file: read a file from the filesystem
 - write_file: write to a file in the filesystem
-- edit_file: edit a file in the filesystem"""
+- edit_file: edit a file in the filesystem
+- glob_search: find files by name pattern (e.g., **/*.py, src/**/*.ts)
+- grep_search: search file contents with regex patterns"""
 FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
 
 You also have access to a longterm filesystem in which you can store files that you want to keep around for longer than the current conversation.
@@ -387,11 +567,71 @@ def _edit_file_tool_generator(
     return edit_file
 
 
+def _glob_search_tool_generator(
+    backend: MemoryBackend,
+    custom_description: str | None = None,
+) -> BaseTool:
+    """Generate the glob_search tool.
+
+    Args:
+        backend: Backend to use for file storage.
+        custom_description: Optional custom description for the tool.
+
+    Returns:
+        Configured glob_search tool that searches file paths by pattern.
+    """
+    tool_description = custom_description or GLOB_SEARCH_TOOL_DESCRIPTION
+
+    @tool(description=tool_description)
+    def glob_search(
+        pattern: str,
+        runtime: ToolRuntime[None, FilesystemState],
+        path: str = "/",
+    ) -> str:
+        path = _validate_path(path)
+        files = backend.get_all_files()
+        return _glob_search_files(files, pattern, path)
+
+    return glob_search
+
+
+def _grep_search_tool_generator(
+    backend: MemoryBackend,
+    custom_description: str | None = None,
+) -> BaseTool:
+    """Generate the grep_search tool.
+
+    Args:
+        backend: Backend to use for file storage.
+        custom_description: Optional custom description for the tool.
+
+    Returns:
+        Configured grep_search tool that searches file contents by regex.
+    """
+    tool_description = custom_description or GREP_SEARCH_TOOL_DESCRIPTION
+
+    @tool(description=tool_description)
+    def grep_search(
+        pattern: str,
+        runtime: ToolRuntime[None, FilesystemState],
+        path: str = "/",
+        include: str | None = None,
+        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
+    ) -> str:
+        path = _validate_path(path)
+        files = backend.get_all_files()
+        return _grep_search_files(files, pattern, path, include, output_mode)
+
+    return grep_search
+
+
 TOOL_GENERATORS = {
     "ls": _ls_tool_generator,
     "read_file": _read_file_tool_generator,
     "write_file": _write_file_tool_generator,
     "edit_file": _edit_file_tool_generator,
+    "glob_search": _glob_search_tool_generator,
+    "grep_search": _grep_search_tool_generator,
 }
 
 
