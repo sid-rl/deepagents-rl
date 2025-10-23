@@ -11,7 +11,7 @@ def factorial(n):
         return 1
     return n * factorial(n - 1)
 
-result = factorial(5)
+result = factorial('not a number')
 print(f"Factorial of 5 is: {result}")
 ```
 
@@ -23,6 +23,6 @@ function greet(name) {
     return `Hello, ${name}!`;
 }
 
-console.log(greet("DeepAgents"));
+result = greet(undefinedVariable)
 console.log("Testing complete!");
 ```
