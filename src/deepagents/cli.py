@@ -17,6 +17,7 @@ from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from deepagents.github.tools import comment_on_issue
 from deepagents.memory.backends.filesystem import FilesystemBackend
 from deepagents.middleware.agent_memory import AgentMemoryMiddleware
 from pathlib import Path
@@ -189,6 +190,7 @@ def display_tool_call(tool_name: str, tool_input: dict):
         "http_request": "🌍",
         "task": "🤖",
         "write_todos": "📋",
+        "comment_on_issue": "💬",
     }
     
     icon = tool_icons.get(tool_name, "🔧")
@@ -299,6 +301,7 @@ def execute_task(user_input: str | Command, agent, assistant_id: str | None):
                                         "http_request": "🌍",
                                         "task": "🤖",
                                         "write_todos": "📋",
+                                        "comment_on_issue": "💬",
                                     }
                                     
                                     icon = tool_icons.get(tool_name, "🔧")
@@ -548,7 +551,7 @@ async def main(assistant_id: str):
     """Main entry point."""
     
     # Create agent with conditional tools
-    tools = [http_request]
+    tools = [http_request, comment_on_issue]
     if tavily_client is not None:
         tools.append(web_search)
 
@@ -584,7 +587,7 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
         memory_backend=backend,
         use_longterm_memory=long_term_backend,
         middleware=agent_middleware,
-        interrupt_on={"shell": True},
+        interrupt_on={"shell": True, "comment_on_issue": True},
     ).with_config(config)
     
     agent.checkpointer = InMemorySaver()
