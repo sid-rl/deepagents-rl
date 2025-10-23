@@ -11,7 +11,7 @@ from pathlib import Path
 from tavily import TavilyClient
 from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import Command, Interrupt
+from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -497,6 +497,11 @@ async def main(assistant_id: str):
     if tavily_client is not None:
         tools.append(web_search)
 
+    shell_middleware = ShellToolMiddleware(
+        workspace_root=os.getcwd(),
+        execution_policy=HostExecutionPolicy()
+    )
+
     backend = FilesystemBackend()
     
     # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
@@ -512,7 +517,7 @@ async def main(assistant_id: str):
     long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
     # Use the same backend for agent memory middleware
-    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend)]
+    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend), shell_middleware]
     system_prompt = f"""### Current Working Directory
 
 The filesystem backend is currently operating in: `{Path.cwd()}`"""
