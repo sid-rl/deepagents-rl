@@ -6,9 +6,186 @@ and creating executable scripts to test that the documentation is correct.
 """
 
 import argparse
+import os
 from pathlib import Path
+from typing import Any, Callable, NotRequired, Optional
 
+from daytona import Daytona, DaytonaConfig
 from deepagents import create_deep_agent
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain_core.tools import tool
+from langgraph.runtime import Runtime
+
+
+# Simplified Daytona sandbox wrapper
+class SimpleDaytonaSandbox:
+    """Simplified wrapper for Daytona sandbox operations."""
+
+    def __init__(self, sandbox):
+        """Initialize with a Daytona sandbox instance."""
+        self.sandbox = sandbox
+        self.exec_session_id = "main-exec-session"
+
+    @property
+    def id(self) -> str:
+        """Get the sandbox ID."""
+        return self.sandbox.id
+
+    def exec(self, command: list[str], cwd: Optional[str] = None, *, timeout: int = 30 * 60):
+        """Execute a command in the sandbox.
+
+        Args:
+            command: Command to execute as list of arguments.
+            cwd: Working directory to execute the command in.
+            timeout: Maximum execution time in seconds.
+
+        Returns:
+            Dictionary with 'result' and 'exit_code' keys.
+        """
+        execute_response = self.sandbox.process.exec(command, cwd=cwd, timeout=timeout)
+        return {
+            "result": execute_response.result,
+            "exit_code": execute_response.exit_code,
+        }
+
+
+class SimpleDaytonaSandboxManager:
+    """Simplified sandbox manager for creating and managing Daytona sandboxes."""
+
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        """Initialize the SandboxManager with a Daytona client.
+
+        Args:
+            api_key: Daytona API key. If not provided, uses DAYTONA_API_KEY env var.
+        """
+        api_key = api_key or os.environ.get("DAYTONA_API_KEY")
+        if api_key is None:
+            raise ValueError("Either api_key parameter or DAYTONA_API_KEY environment variable must be provided.")
+
+        config = DaytonaConfig(api_key=api_key)
+        self.daytona_client = Daytona(config)
+
+    def create(self, **kwargs) -> SimpleDaytonaSandbox:
+        """Create and return a new sandbox.
+
+        Returns:
+            A SimpleDaytonaSandbox instance.
+        """
+        sandbox = self.daytona_client.create(**kwargs)
+        # Create a session for execution
+        session_id = "main-exec-session"
+        sandbox.process.create_session(session_id)
+        return SimpleDaytonaSandbox(sandbox)
+
+    def delete(self, id: str) -> None:
+        """Delete a sandbox by its ID.
+
+        Args:
+            id: The sandbox ID to delete.
+        """
+        sandbox = self.daytona_client.get(id)
+        self.daytona_client.delete(sandbox)
+
+
+# Custom state schema with sandbox_id
+class DocVerifierState(AgentState):
+    """State schema for the documentation verifier agent."""
+    sandbox_id: NotRequired[str]
+
+
+# Sandbox middleware
+class SandboxMiddleware(AgentMiddleware[DocVerifierState]):
+    """Middleware that manages a Daytona sandbox for code execution."""
+
+    state_schema = DocVerifierState
+
+    def __init__(self, api_key: str | None = None):
+        """Initialize the sandbox middleware.
+
+        Args:
+            api_key: Daytona API key. If not provided, uses DAYTONA_API_KEY env var.
+        """
+        super().__init__()
+        self.sandbox_manager = SimpleDaytonaSandboxManager(api_key=api_key)
+        self.sandbox_toolkit = None
+
+    def before_agent(self, state: DocVerifierState, runtime: Runtime) -> dict[str, Any] | None:
+        """Create a sandbox before the agent starts."""
+        print("Creating Daytona sandbox...")
+
+        # Create a new sandbox
+        self.sandbox_toolkit = self.sandbox_manager.create()
+        sandbox_id = self.sandbox_toolkit.id
+
+        print(f"Sandbox created: {sandbox_id}")
+
+        # Store sandbox_id in state
+        return {"sandbox_id": sandbox_id}
+
+    def after_agent(self, state: DocVerifierState, runtime: Runtime) -> dict[str, Any] | None:
+        """Clean up the sandbox after the agent completes."""
+        sandbox_id = state.get("sandbox_id")
+
+        if sandbox_id:
+            print(f"Cleaning up sandbox: {sandbox_id}")
+            try:
+                self.sandbox_manager.delete(sandbox_id)
+                print("Sandbox deleted successfully")
+            except Exception as e:
+                print(f"Warning: Failed to delete sandbox: {e}")
+
+        return None
+
+
+# Create a bash tool factory that uses the sandbox middleware
+def create_sandbox_bash_tool(sandbox_middleware: SandboxMiddleware):
+    """Create a bash tool that executes commands in the sandbox.
+
+    Args:
+        sandbox_middleware: The sandbox middleware instance that manages the sandbox.
+
+    Returns:
+        A LangChain tool for executing bash commands in the sandbox.
+    """
+
+    @tool
+    def bash(command: str) -> str:
+        """Execute a bash command in the isolated sandbox environment.
+
+        Use this tool to run shell commands, execute scripts, install dependencies,
+        or perform any other bash operations needed to verify the documentation.
+
+        Args:
+            command: The bash command to execute (e.g., "python script.py", "pip install requests")
+
+        Returns:
+            The output from the command execution, including stdout and stderr.
+        """
+        if not sandbox_middleware.sandbox_toolkit:
+            return "Error: Sandbox not initialized. Cannot execute command."
+
+        try:
+            # Execute the command in the sandbox
+            # Split the command into a list for exec
+            import shlex
+            command_list = shlex.split(command)
+
+            result = sandbox_middleware.sandbox_toolkit.exec(command_list)
+
+            # Format the response
+            output = result["result"]
+            exit_code = result.get("exit_code", 0)
+
+            if exit_code == 0:
+                return output
+            else:
+                return f"Command failed with exit code {exit_code}:\n{output}"
+
+        except Exception as e:
+            return f"Error executing command: {str(e)}"
+
+    return bash
+
 
 # System prompt for the documentation verifier agent
 DOC_VERIFIER_PROMPT = """You are an expert documentation verification agent. Your job is to verify that technical documentation works correctly by extracting and testing code snippets.
@@ -39,7 +216,14 @@ Important guidelines:
 - Provide clear, actionable feedback on any issues found
 - The verification script should be named 'verify_{original_doc_name}.py'
 
-You have access to standard file operations (read, write, edit) and bash commands to execute scripts and install dependencies if needed.
+You have access to a bash tool that executes commands in an isolated Daytona sandbox environment.
+Use this tool to:
+- Create and run verification scripts
+- Install dependencies (e.g., "pip install requests")
+- Execute Python code
+- Run any bash commands needed for testing
+
+The sandbox is automatically created at the start and cleaned up at the end.
 """
 
 
@@ -78,10 +262,17 @@ def main():
     print(f"Output directory: {output_dir}")
     print("-" * 80)
 
-    # Create the agent with planning middleware
+    # Create the sandbox middleware
+    sandbox_middleware = SandboxMiddleware()
+
+    # Create the bash tool that uses the sandbox
+    bash_tool = create_sandbox_bash_tool(sandbox_middleware)
+
+    # Create the agent with sandbox middleware
     agent = create_deep_agent(
         system_prompt=DOC_VERIFIER_PROMPT,
-        interrupt_on={"shell": True},
+        tools=[bash_tool],
+        middleware=[sandbox_middleware],
     )
 
     # Prepare the initial message with the documentation
