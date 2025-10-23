@@ -48,62 +48,92 @@ class DocsReviewerCLIAgent:
         # Create tools and agent
         self.tools = self._create_cli_tools()
 
-        # Add code execution tool
-        self.execute_code_snippet = create_code_execution_tool()
-        all_tools = self.tools + [self.execute_code_snippet]
+        # Create code execution tool for subagents
+        execute_code_snippet = create_code_execution_tool()
+
+        # Define snippet fixer subagent - handles ALL testing and fixing
+        snippet_fixer_subagent = {
+            "name": "snippet_fixer",
+            "description": "Test and fix a code snippet, returning the working version",
+            "system_prompt": """You are a code testing and fixing specialist.
+
+Your job:
+1. Test the code snippet by calling execute_code_snippet(code, language, dependencies)
+2. If it passes → return the original code with success=true
+3. If it fails → analyze the error, fix the code, test again (max 3 attempts)
+4. Return the final result
+
+You MUST return a JSON response:
+{
+  "success": true/false,
+  "original_code": "...",
+  "fixed_code": "...",  // same as original if it worked first try
+  "error": "..."  // empty if success
+}
+
+Important:
+- Analyze imports to detect dependencies (pandas, numpy, axios, etc)
+- Be surgical with fixes - only change what's broken
+- Preserve original intent and structure
+- Give up after 3 fix attempts
+""",
+            "tools": [execute_code_snippet],
+            "model": self.llm,
+        }
 
         # Create agent with checkpointer for conversation memory
         from langgraph.checkpoint.memory import MemorySaver
 
         self.agent = create_deep_agent(
             model=self.llm,
-            tools=all_tools,
+            tools=self.tools,  # Main agent only has file/directory tools
             system_prompt=self._get_system_prompt(),
             checkpointer=MemorySaver(),  # In-memory checkpointer for conversation state
             context_schema=DocsReviewerState,  # Custom state schema with file cache
+            subagents=[snippet_fixer_subagent],  # Subagent has execute_code_snippet
         )
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the CLI agent."""
-        return f"""You are a documentation reviewer that validates code snippets in markdown files.
+        return f"""You are a documentation reviewer that validates and fixes code snippets in markdown files.
 
 Working directory: {self.current_working_directory}
 
-## Workflow for reviewing files:
+## Workflow:
 
-1. Use `list_snippets` to show what code snippets exist in a file
-2. Use `review_markdown_file` to start the review process - this extracts executable snippets
-3. Call `execute_code_snippet` for EACH snippet IN PARALLEL to validate them
-   - Pass: code, language, dependencies (list), python_version (if applicable)
-   - Example: execute_code_snippet(code="import pandas as pd...", language="python", dependencies=["pandas"])
-   - You can make multiple execute_code_snippet calls at the same time
-   - This is the key to fast reviews - parallel execution!
-4. Use `finalize_review` to apply inline edits and show the diff
+1. Call `review_markdown_file(file)` - extracts all snippets
+2. For EACH snippet, spawn a `snippet_fixer` subagent using the `task` tool (spawn all in parallel)
+3. Each subagent will test and fix its snippet, returning a JSON result
+4. Collect all subagent results and call `finalize_review([results])` to update the markdown
 
-## execute_code_snippet Tool Details:
+## Spawning snippet_fixer subagents:
 
-For **Python** snippets:
-- If code imports packages (pandas, numpy, requests, etc.), include them in dependencies
-- Example: dependencies=["pandas", "numpy", "matplotlib"]
-- Optionally specify python_version="3.11" if needed
-- Uses uv/uvx for isolated execution with dependency installation
+For each snippet, call task with:
+```
+task(
+  subagent="snippet_fixer",
+  prompt="Test and fix this code snippet.
 
-For **JavaScript** snippets:
-- If code requires npm packages, include them in dependencies
-- Example: dependencies=["axios", "lodash"]
-- Uses node with automatic npm install
+Code:
+```python
+def factorial(n):
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+result = factorial('not a number')
+print(f'Result: {{result}}')
+```
 
-For **Bash** snippets:
-- No dependencies needed, executes directly
+Language: python
+Dependencies: [] (detect from imports if any)
+"
+)
+```
 
-## Important Notes:
+The subagent returns JSON like:
+{{"success": true, "original_code": "...", "fixed_code": "...", "error": ""}}
 
-- Files are edited inline (no separate _corrected.md files)
-- LangGraph will automatically execute parallel tool calls concurrently
-- Always call execute_code_snippet IN PARALLEL for all snippets (not one at a time)
-- Analyze code to detect required dependencies from import statements
-- Be direct and concise in your responses
-- Use relative paths from the working directory
+Call finalize_review with ALL these results.
 """
 
     def _create_cli_tools(self) -> list:
@@ -111,80 +141,18 @@ For **Bash** snippets:
         tools = []
 
         @tool
-        def list_snippets(markdown_file: str) -> dict[str, Any]:
+        def review_markdown_file(markdown_file: str) -> str:
             """
-            List all code snippets found in a markdown file without executing them.
+            Extract code snippets from a markdown file.
 
-            This tool caches the snippet data so it can be reused by review_markdown_file.
-
-            Args:
-                markdown_file: Path to the markdown file (relative or absolute)
-
-            Returns:
-                Dictionary with snippet information
-            """
-            try:
-                file_path = Path(markdown_file)
-                if not file_path.is_absolute():
-                    file_path = self.current_working_directory / file_path
-
-                if not file_path.exists():
-                    return {"error": f"File not found: {file_path}"}
-
-                # Extract snippets
-                snippets = extract_code_snippets(file_path)
-                executable = filter_executable_snippets(snippets)
-                categories = categorize_snippets(snippets)
-
-                # Store in cache for later use by review_markdown_file
-                file_key = str(file_path)
-                cache_data = {
-                    "snippets": snippets,
-                    "executable": executable,
-                    "file_path": file_path,
-                }
-
-                # Store in instance variable for immediate access
-                if not hasattr(self, '_file_cache'):
-                    self._file_cache = {}
-                self._file_cache[file_key] = cache_data
-
-                return {
-                    "file": str(file_path),
-                    "total_snippets": len(snippets),
-                    "executable_snippets": len(executable),
-                    "categories": {lang: len(snips) for lang, snips in categories.items()},
-                    "snippets": [
-                        {
-                            "language": s["language"],
-                            "lines": f"{s['start_line']}-{s['end_line']}",
-                            "length": len(s["code"]),
-                            "preview": s["code"][:100] + "..." if len(s["code"]) > 100 else s["code"],
-                        }
-                        for s in snippets
-                    ],
-                }
-            except Exception as e:
-                return {"error": str(e)}
-
-        @tool
-        def review_markdown_file(markdown_file: str, output_file: Optional[str] = None) -> str:
-            """
-            Review a markdown file and return the list of code snippets to execute.
-
-            If you previously called list_snippets on this file, I'll reuse that data
-            to avoid redundant work!
-
-            IMPORTANT: After calling this tool, you MUST call execute_code_snippet for EACH
-            snippet returned. You can call execute_code_snippet multiple times IN PARALLEL
-            to speed up the review process.
+            IMPORTANT: After calling this tool, spawn a snippet_fixer subagent for EACH
+            snippet using the task tool. Do this IN PARALLEL for speed.
 
             Args:
                 markdown_file: Path to the markdown file to review
-                output_file: Optional path for the corrected markdown (default: <input>_corrected.md)
 
             Returns:
-                Instructions on what snippets to execute next
+                List of snippets with their code and metadata
             """
             try:
                 file_path = Path(markdown_file)
@@ -194,81 +162,65 @@ For **Bash** snippets:
                 if not file_path.exists():
                     return f"Error: File not found: {file_path}"
 
-                file_key = str(file_path)
+                # Extract snippets
+                snippets = extract_code_snippets(file_path)
+                if not snippets:
+                    return "No code snippets found in file"
 
-                # Check if we have cached data from list_snippets
-                if hasattr(self, '_file_cache') and file_key in self._file_cache:
-                    cache_data = self._file_cache[file_key]
-                    snippets = cache_data["snippets"]
-                    executable = cache_data["executable"]
-                    used_cache = True
-                else:
-                    # Extract snippets fresh
-                    snippets = extract_code_snippets(file_path)
-                    if not snippets:
-                        return "Error: No code snippets found in file"
-
-                    # Get executable snippets
-                    executable = filter_executable_snippets(snippets)
-                    used_cache = False
-
+                # Get executable snippets
+                executable = filter_executable_snippets(snippets)
                 if not executable:
-                    return "No executable code snippets found in this file."
+                    return "No executable code snippets found in this file"
 
-                # Store the context for later use
+                # Store context for finalize_review
                 self._review_context = {
                     "file_path": file_path,
-                    "output_file": output_file,
                     "snippets": snippets,
                     "executable": executable,
                 }
 
-                # Create a mapping of code -> line numbers for display
+                # Create line number mapping for display
                 self._code_line_map = {
                     s['code']: f"lines {s['start_line']}-{s['end_line']}"
                     for s in executable
                 }
 
-                # Return detailed snippet info
+                # Return snippet details with code preview
                 snippet_details = []
                 for i, s in enumerate(executable):
-                    code_preview = s['code'][:100] + "..." if len(s['code']) > 100 else s['code']
+                    # Get first 10 lines of code
+                    code_lines = s['code'].split('\n')[:10]
+                    code_preview = '\n'.join(code_lines)
+                    if len(s['code'].split('\n')) > 10:
+                        code_preview += '\n...'
+
                     snippet_details.append(
-                        f"  {i+1}. {s['language']} (lines {s['start_line']}-{s['end_line']})\n"
-                        f"     Code: {repr(code_preview)}"
+                        f"Snippet {i+1} ({s['language']}, lines {s['start_line']}-{s['end_line']}):\n{code_preview}"
                     )
 
-                snippet_list = "\n".join(snippet_details)
+                return f"""Found {len(executable)} executable snippets in {file_path.name}:
 
-                # Indicate if we reused cached data
-                cache_note = " (reusing previously scanned snippets)" if used_cache else ""
+{chr(10).join(snippet_details)}
 
-                return f"""Found {len(executable)} executable code snippets in {file_path.name}{cache_note}:
-
-{snippet_list}
-
-NEXT STEP: Call execute_code_snippet for each snippet IN PARALLEL.
-Analyze each snippet for import statements to detect dependencies.
-
-For each snippet:
-- Look for imports (Python: import/from, JS: require/import)
-- Call execute_code_snippet with: code, language, dependencies (if any)
-- Make ALL calls in parallel (not one at a time)
-
-After all snippets execute, call finalize_review with the results."""
+NEXT: Spawn a snippet_fixer subagent for EACH snippet (all in parallel).
+After all complete, call finalize_review with ALL the results."""
             except Exception as e:
                 return f"Error: {str(e)}"
 
         @tool
-        def finalize_review(execution_results: list[str]) -> str:
+        def finalize_review(snippet_results: list[dict]) -> str:
             """
-            Finalize the review by applying inline edits to the markdown file.
+            Apply fixes to the markdown file and show diff.
 
-            Call this AFTER you have executed all code snippets using execute_code_snippet.
+            Call this AFTER testing/fixing all snippets.
 
             Args:
-                execution_results: List of JSON strings from execute_code_snippet calls
-                                 Each should be: {"success": bool, "output": str, "error": str}
+                snippet_results: List of results for each snippet, in order.
+                                Each dict should have:
+                                - "original_code": str - original snippet code
+                                - "fixed_code": str - fixed code (or same as original if it worked)
+                                - "success": bool - whether the final version works
+                                - "error": str - error message if failed
 
             Returns:
                 JSON string with diff and summary statistics
@@ -284,26 +236,28 @@ After all snippets execute, call finalize_review with the results."""
                 snippets = context["snippets"]
                 executable = context["executable"]
 
-                # Parse execution results
+                # Build results from snippet_results
                 results = []
-                for i, (snippet, exec_result_str) in enumerate(zip(executable, execution_results)):
-                    try:
-                        exec_result = json.loads(exec_result_str) if isinstance(exec_result_str, str) else exec_result_str
-                    except json.JSONDecodeError:
-                        exec_result = {"success": False, "output": "", "error": "Invalid result format"}
+                for i, (snippet, result_dict) in enumerate(zip(executable, snippet_results)):
+                    # Extract data from result dict
+                    fixed_code = result_dict.get("fixed_code", snippet["code"])
+                    success = result_dict.get("success", False)
+                    error = result_dict.get("error", "")
 
-                    # Build analysis from execution result
-                    if exec_result.get("success"):
-                        analysis = f"✓ Success\nOutput: {exec_result.get('output', '')}"
+                    # Build analysis
+                    if success:
+                        analysis = f"✓ Success"
+                        if fixed_code != snippet["code"]:
+                            analysis += " (code was fixed)"
                     else:
-                        analysis = f"✗ Failed\nError: {exec_result.get('error', '')}"
+                        analysis = f"✗ Failed\nError: {error}"
 
                     results.append({
                         "snippet_index": i,
-                        "success": exec_result.get("success", False),
+                        "success": success,
                         "analysis": analysis,
                         "original_code": snippet["code"],
-                        "corrected_code": snippet["code"],  # For now, no corrections - just validation
+                        "corrected_code": fixed_code,  # Use the fixed code
                         "language": snippet["language"],
                         "start_line": snippet["start_line"],
                         "end_line": snippet["end_line"],
@@ -407,7 +361,6 @@ After all snippets execute, call finalize_review with the results."""
             except Exception as e:
                 return {"error": str(e)}
 
-        tools.append(list_snippets)
         tools.append(review_markdown_file)
         tools.append(finalize_review)
         tools.append(change_directory)
@@ -507,6 +460,15 @@ After all snippets execute, call finalize_review with the results."""
                                 if has_content and final_response and not final_response.endswith('\n'):
                                     console.print()
 
+                                # Special formatting for task (subagent spawning)
+                                if tool_name == "task":
+                                    subagent = tool_args.get('subagent', 'unknown')
+                                    prompt_preview = tool_args.get('prompt', '')[:80]
+                                    console.print(f"\n[yellow]🤖 Spawning subagent:[/yellow] [cyan]{subagent}[/cyan]")
+                                    if prompt_preview:
+                                        console.print(f"  [dim]{prompt_preview}...[/dim]")
+                                    continue
+
                                 # For other tools, show them immediately
                                 console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
                                 # Show args if they're concise
@@ -582,18 +544,33 @@ After all snippets execute, call finalize_review with the results."""
                                 console.print(f"[red]  ✗ Error: {result['error']}[/red]\n")
                                 continue
 
-                            # Special formatting for list_snippets
-                            if tool_name == "list_snippets" and isinstance(result, dict):
-                                total = result.get("total_snippets", 0)
-                                console.print(f"[#2f6868]  ✅ Found {total} snippet{'s' if total != 1 else ''}[/#2f6868]")
+                            # Special formatting for task (subagent) results
+                            if tool_name == "task" and isinstance(result, str):
+                                # Show subagent completion
+                                subagent_name = "unknown"
+                                if tool_call_id in tool_call_details:
+                                    _, args = tool_call_details[tool_call_id]
+                                    subagent_name = args.get('subagent', 'unknown')
 
-                                snippets = result.get("snippets", [])
-                                if snippets:
-                                    for i, snip in enumerate(snippets, 1):
-                                        lang = snip.get("language", "unknown")
-                                        lines = snip.get("lines", "?")
-                                        console.print(f"    [dim]{i}.[/dim] [cyan]{lang}[/cyan] [dim](lines {lines})[/dim]")
-                                console.print()
+                                console.print(f"\n[yellow]✅ Subagent complete:[/yellow] [cyan]{subagent_name}[/cyan]")
+                                # Show first 200 chars of result
+                                result_preview = result[:200] + "..." if len(result) > 200 else result
+                                console.print(f"  [dim]{result_preview}[/dim]\n")
+                                continue
+
+                            # Special formatting for review_markdown_file - show snippets
+                            if tool_name == "review_markdown_file" and isinstance(result, str):
+                                # Parse snippet info and display nicely
+                                if "Found" in result and "snippets" in result:
+                                    console.print(f"[#2f6868]  ✅ {result.split(chr(10))[0]}[/#2f6868]")
+                                    # Display code snippets with syntax highlighting
+                                    lines = result.split('\n')
+                                    for line in lines[2:]:  # Skip first two lines
+                                        if line.startswith('Snippet'):
+                                            console.print(f"\n  [cyan]{line}[/cyan]")
+                                        elif line.strip() and not line.startswith('NEXT'):
+                                            console.print(f"    [dim]{line}[/dim]")
+                                    console.print()
                                 continue
 
                             # Special formatting for finalize_review - show diff
