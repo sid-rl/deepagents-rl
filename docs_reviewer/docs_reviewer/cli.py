@@ -32,8 +32,14 @@ def check_api_key() -> bool:
 
 
 def show_welcome():
-    """Display minimal welcome message."""
-    console.print("[dim]Docs Reviewer ready. Type your request or 'exit' to quit.[/dim]")
+    """Display welcome message with capabilities."""
+    console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd] - AI-powered documentation code reviewer\n")
+    console.print("I can help you:")
+    console.print("  • Review markdown files and validate code snippets")
+    console.print("  • Find and list code snippets in documentation")
+    console.print("  • Generate corrected versions of docs with fixes")
+    console.print("  • Search for markdown files in your project")
+    console.print("\n[dim]Just tell me what you'd like to do, or type 'exit' to quit.[/dim]")
 
 
 def show_setup_instructions():
@@ -98,7 +104,7 @@ def chat(
 
     # Single message mode
     if message:
-        console.print("\n[bold green]Docs Reviewer[/bold green]")
+        console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd]")
         response = agent.process_message(message, console)
         console.print()
         return
@@ -108,7 +114,7 @@ def chat(
     while conversation_active:
         try:
             # Get user input
-            user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
+            user_input = Prompt.ask("\n[bold #beb4fd]You[/bold #beb4fd]")
 
             if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
                 console.print()
@@ -119,7 +125,7 @@ def chat(
                 continue
 
             # Process with agent - show streaming progress
-            console.print("\n[bold green]Docs Reviewer[/bold green]")
+            console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd]")
             response = agent.process_message(user_input, console)
             console.print()
 
