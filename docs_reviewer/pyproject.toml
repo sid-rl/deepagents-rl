@@ -6,11 +6,13 @@ readme = "README.md"
 requires-python = ">=3.11,<4.0"
 dependencies = [
     "deepagents",
+    "langchain-anthropic>=0.3.14",  # Required for code execution tool
     "typer>=0.9.0",
     "rich>=13.0.0",
     "pyyaml>=6.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+    "prompt-toolkit>=3.0.0",  # For command history with up/down arrows
 ]
 
 [project.scripts]

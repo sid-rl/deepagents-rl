@@ -222,6 +222,12 @@ For **Bash** snippets:
                     "executable": executable,
                 }
 
+                # Create a mapping of code -> line numbers for display
+                self._code_line_map = {
+                    s['code']: f"lines {s['start_line']}-{s['end_line']}"
+                    for s in executable
+                }
+
                 # Return detailed snippet info
                 snippet_details = []
                 for i, s in enumerate(executable):
@@ -426,11 +432,12 @@ After all snippets execute, call finalize_review with the results."""
         # Stream the agent's response
         try:
             final_response = ""
-            seen_tool_calls = set()
             shown_todos = set()
             last_ai_message = None
+            # Track tool call details for displaying with results
+            tool_call_details = {}  # Maps tool_call_id -> (tool_name, args)
 
-            # Use only "updates" stream mode for smoother, less jumpy output
+            # Use only "updates" stream mode - LangGraph only sends new messages per node
             # Pass only the new message - LangGraph will handle conversation history via checkpointer
             for stream_item in self.agent.stream(
                 {"messages": [HumanMessage(content=message)]},
@@ -453,8 +460,15 @@ After all snippets execute, call finalize_review with the results."""
                             messages = [messages]
 
                         for msg in messages:
+                            # Only process AI and tool messages (skip human messages)
+                            if not hasattr(msg, 'type'):
+                                continue
+
+                            if msg.type == 'human':
+                                continue
+
                             # Handle AI messages
-                            if hasattr(msg, 'type') and msg.type == 'ai':
+                            if msg.type == 'ai':
                                 last_ai_message = msg
 
                                 # Check if this AI message has text content (not just tool calls)
@@ -480,42 +494,43 @@ After all snippets execute, call finalize_review with the results."""
                                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                                     for tool_call in msg.tool_calls:
                                         tool_id = tool_call.get('id', '') or str(tool_call)
+                                        tool_name = tool_call.get('name', 'unknown')
+                                        tool_args = tool_call.get('args', {})
 
-                                        if tool_id not in seen_tool_calls:
-                                            seen_tool_calls.add(tool_id)
+                                        # Store tool call details for result display
+                                        tool_call_details[tool_id] = (tool_name, tool_args)
 
-                                            # Add newline if we just printed content
-                                            if has_content and final_response and not final_response.endswith('\n'):
-                                                console.print()
+                                        # For execute_code_snippet, DON'T print anything yet - wait for result
+                                        # This prevents the display from showing tool call then result separately
+                                        if tool_name == "execute_code_snippet":
+                                            continue
 
-                                            tool_name = tool_call.get('name', 'unknown')
-                                            tool_args = tool_call.get('args', {})
+                                        # Add newline if we just printed content
+                                        if has_content and final_response and not final_response.endswith('\n'):
+                                            console.print()
 
-                                            # Format tool call nicely - but only show args if they're concise
-                                            args_str = json.dumps(tool_args)
-                                            if len(args_str) > 150:
-                                                # Too verbose, just show the tool name with emoji
-                                                console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
-                                            else:
-                                                # Show args nicely if they're reasonable
-                                                console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
-                                                if tool_args:
-                                                    for key, value in tool_args.items():
-                                                        if isinstance(value, str) and len(value) > 60:
-                                                            console.print(f"  [dim]{key}:[/dim] {value[:60]}...")
-                                                        else:
-                                                            console.print(f"  [dim]{key}:[/dim] {value}")
+                                        # For other tools, show them immediately
+                                        console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
+                                        # Show args if they're concise
+                                        if tool_args:
+                                            for key, value in tool_args.items():
+                                                if isinstance(value, str) and len(value) > 60:
+                                                    console.print(f"  [dim]{key}:[/dim] {value[:60]}...")
+                                                elif isinstance(value, (list, dict)):
+                                                    # Skip verbose data structures
+                                                    continue
+                                                else:
+                                                    console.print(f"  [dim]{key}:[/dim] {value}")
 
                             # Handle tool response messages
                             elif hasattr(msg, 'type') and msg.type == 'tool':
-                                # Get tool name from tool_call_id by looking up in recent AI message
+                                tool_call_id = getattr(msg, 'tool_call_id', None)
+
+                                # Get tool name and args from stored details
                                 tool_name = 'unknown'
-                                if last_ai_message and hasattr(last_ai_message, 'tool_calls'):
-                                    tool_call_id = getattr(msg, 'tool_call_id', None)
-                                    for tc in last_ai_message.tool_calls:
-                                        if tc.get('id') == tool_call_id:
-                                            tool_name = tc.get('name', 'unknown')
-                                            break
+                                tool_args = {}
+                                if tool_call_id in tool_call_details:
+                                    tool_name, tool_args = tool_call_details[tool_call_id]
 
                                 tool_content = getattr(msg, 'content', '')
 
@@ -529,19 +544,21 @@ After all snippets execute, call finalize_review with the results."""
                                         try:
                                             exec_result = json.loads(result) if isinstance(result, str) else result
 
-                                            # Get the language from tool args
-                                            language = "unknown"
-                                            if last_ai_message and hasattr(last_ai_message, 'tool_calls'):
-                                                tool_call_id = getattr(msg, 'tool_call_id', None)
-                                                for tc in last_ai_message.tool_calls:
-                                                    if tc.get('id') == tool_call_id:
-                                                        language = tc.get('args', {}).get('language', 'unknown')
-                                                        break
+                                            # Get language and line info from stored tool args
+                                            language = tool_args.get('language', 'unknown')
+                                            code = tool_args.get('code', '')
+                                            line_info = None
+                                            if hasattr(self, '_code_line_map') and code in self._code_line_map:
+                                                line_info = self._code_line_map[code]
 
+                                            # Show as a combined tool call + result (inline style)
                                             if exec_result.get("success"):
                                                 output = exec_result.get("output", "")
                                                 preview = output[:100] + "..." if len(output) > 100 else output
-                                                console.print(f"[#2f6868]  ✓ {language}[/#2f6868]", end="")
+                                                # Show on single line: "🔧 execute_code_snippet → ✓ python (lines X-Y) → 'output'"
+                                                console.print(f"\n[#beb4fd]🔧 execute_code_snippet[/#beb4fd] [dim]→[/dim] [#2f6868]✓ {language}[/#2f6868]", end="")
+                                                if line_info:
+                                                    console.print(f" [dim]{line_info}[/dim]", end="")
                                                 if preview.strip():
                                                     console.print(f" [dim]→[/dim] {repr(preview)}")
                                                 else:
@@ -553,9 +570,12 @@ After all snippets execute, call finalize_review with the results."""
                                                 error_preview = error_lines[-1].strip() if error_lines else error
                                                 if len(error_preview) > 80:
                                                     error_preview = error_preview[:80] + "..."
-                                                console.print(f"[red]  ✗ {language}[/red] [dim]→[/dim] {error_preview}")
+                                                console.print(f"\n[#beb4fd]🔧 execute_code_snippet[/#beb4fd] [dim]→[/dim] [red]✗ {language}[/red]", end="")
+                                                if line_info:
+                                                    console.print(f" [dim]{line_info}[/dim]", end="")
+                                                console.print(f" [dim]→[/dim] {error_preview}")
                                         except (json.JSONDecodeError, TypeError):
-                                            console.print(f"[#2f6868]  ✓[/#2f6868]")
+                                            console.print(f"\n[#beb4fd]🔧 execute_code_snippet[/#beb4fd] [dim]→[/dim] [#2f6868]✓[/#2f6868]")
                                         continue
 
                                     # Check for errors in other tools
@@ -575,9 +595,10 @@ After all snippets execute, call finalize_review with the results."""
                                                 lines = snip.get("lines", "?")
                                                 console.print(f"    [dim]{i}.[/dim] [cyan]{lang}[/cyan] [dim](lines {lines})[/dim]")
                                         console.print()
+                                        continue
 
                                     # Special formatting for finalize_review - show diff
-                                    elif tool_name == "finalize_review":
+                                    if tool_name == "finalize_review":
                                         try:
                                             review_result = json.loads(result) if isinstance(result, str) else result
 
@@ -607,7 +628,7 @@ After all snippets execute, call finalize_review with the results."""
                                         continue
 
                                     # Special formatting for find_markdown_files
-                                    elif tool_name == "find_markdown_files" and isinstance(result, dict):
+                                    if tool_name == "find_markdown_files" and isinstance(result, dict):
                                         count = result.get("count", 0)
                                         console.print(f"[#2f6868]  ✅ Found {count} markdown file{'s' if count != 1 else ''}[/#2f6868]")
                                         files = result.get("files", [])
@@ -617,18 +638,17 @@ After all snippets execute, call finalize_review with the results."""
                                             if len(files) > 10:
                                                 console.print(f"    [dim]... and {len(files) - 10} more[/dim]")
                                         console.print()
+                                        continue
 
                                     # Generic success for other tools
-                                    elif isinstance(result, dict) and result.get("success"):
+                                    if isinstance(result, dict) and result.get("success"):
                                         console.print(f"[#2f6868]  ✅ {tool_name}[/#2f6868]\n")
-
-                                    else:
-                                        # Default: just show completion
-                                        console.print(f"[#2f6868]  ✅[/#2f6868]\n")
+                                    # For tools that return simple values (strings, etc), don't show anything
+                                    # They already showed the tool call, that's enough
 
                                 except (json.JSONDecodeError, TypeError):
-                                    # Non-JSON response, just show completion
-                                    console.print(f"[dim]  ✓[/dim]\n")
+                                    # Non-JSON response, don't show anything - tool call was already shown
+                                    pass
 
                     # Handle todos from state
                     if "todos" in node_data:

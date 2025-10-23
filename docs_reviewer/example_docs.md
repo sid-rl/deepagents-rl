@@ -36,6 +36,20 @@ print(response.content)
 
 This example has a deliberate error:
 
+<!-- REVIEW NOTE: This snippet had issues -->
+<!-- ✗ Failed
+Error: Traceback (most recent call last):
+  File "/var/folders/6w/8s1d7h4x6514g9q0hzg2mf9m0000gn/T/tmp7e0im3cu/script.py", line 5, in <module>
+    result = add_numbers(x, y)
+                  -->
+
+<!-- REVIEW NOTE: This snippet had issues -->
+<!-- ✗ Failed
+Error: Traceback (most recent call last):
+  File "/var/folders/6w/8s1d7h4x6514g9q0hzg2mf9m0000gn/T/tmpuvkm73ml/script.py", line 5, in <module>
+    result = add_numbers(x, y)
+                  -->
+
 ```python
 def add_numbers(a, b):
     return a + b

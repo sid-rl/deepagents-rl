@@ -111,16 +111,16 @@ def chat(
 
     # Interactive chat loop with command history
     conversation_active = True
-    command_history = []
-    history_index = -1
 
-    # Use prompt_toolkit for better input with history
+    # Use prompt_toolkit for better input with persistent history
     try:
         from prompt_toolkit import PromptSession
-        from prompt_toolkit.history import InMemoryHistory
+        from prompt_toolkit.history import FileHistory
         from prompt_toolkit.styles import Style
 
-        prompt_history = InMemoryHistory()
+        # Store history in user's home directory
+        history_file = Path.home() / ".docs_reviewer_history"
+        prompt_history = FileHistory(str(history_file))
         prompt_style = Style.from_dict({
             'prompt': '#beb4fd bold',
         })
