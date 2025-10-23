@@ -23,7 +23,7 @@ function greet(name) {
     return `Hello, ${name}!`;
 }
 
-const undefinedVariable = "World";
+var undefinedVariable;
 result = greet(undefinedVariable)
 console.log("Testing complete!");
 ```

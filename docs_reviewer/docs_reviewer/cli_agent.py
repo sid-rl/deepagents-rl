@@ -9,11 +9,26 @@ from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage
 from typing import TypedDict, Annotated
 from langgraph.graph.message import add_messages
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from deepagents import create_deep_agent
 from docs_reviewer.markdown_parser import extract_code_snippets, filter_executable_snippets, categorize_snippets
 from docs_reviewer.markdown_writer import write_corrected_markdown, write_review_report
 from docs_reviewer.agent import create_code_execution_tool
+
+
+async def _get_langchain_docs_tools() -> list:
+    """Get MCP tools for accessing LangChain documentation."""
+    servers = {
+        "fetch": {
+            "command": "uvx",
+            "args": ["mcp-server-fetch"],
+            "env": {},
+            "transport": "stdio",
+        }
+    }
+    client = MultiServerMCPClient(servers)
+    return await client.get_tools()
 
 
 class DocsReviewerState(TypedDict):
@@ -69,9 +84,7 @@ class DocsReviewerCLIAgent:
         mcp_tools = []
         if self.enable_mcp:
             try:
-                from docs_reviewer.mcp_integration import get_langchain_docs_tools
-
-                mcp_tools = await get_langchain_docs_tools()
+                mcp_tools = await _get_langchain_docs_tools()
             except Exception as e:
                 # MCP is optional - continue without it if it fails
                 print(f"Warning: Could not initialize MCP tools: {e}")
