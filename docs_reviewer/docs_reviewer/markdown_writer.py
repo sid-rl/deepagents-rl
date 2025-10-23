@@ -98,20 +98,50 @@ def write_corrected_markdown(
     with open(target_file, "w", encoding="utf-8") as f:
         f.writelines(corrected_lines)
 
-    # Generate unified diff
-    diff_lines = list(difflib.unified_diff(
-        original_lines,
-        corrected_lines,
-        fromfile=str(original_file),
-        tofile=str(target_file),
-        lineterm='',
-    ))
+    # Generate a minimalistic diff showing only the changes
+    diff_lines = _generate_minimalistic_diff(original_lines, corrected_lines, original_file, target_file)
 
     return {
         "has_changes": has_changes,
         "diff": '\n'.join(diff_lines),
         "target_file": str(target_file),
     }
+
+
+def _generate_minimalistic_diff(original_lines: list[str], corrected_lines: list[str],
+                                  original_file: Path, target_file: Path) -> list[str]:
+    """Generate a clean, minimalistic diff focusing on actual changes."""
+    import difflib
+
+    # Get the diff blocks
+    matcher = difflib.SequenceMatcher(None, original_lines, corrected_lines)
+    diff_output = []
+
+    diff_output.append(f"--- {original_file}")
+    diff_output.append(f"+++ {target_file}")
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            continue
+
+        # Add location marker
+        diff_output.append(f"@@ -{i1+1},{i2-i1} +{j1+1},{j2-j1} @@")
+
+        # Show removed lines (non-empty only, or keep one empty to show the change)
+        removed_lines = original_lines[i1:i2]
+        non_empty_removed = [l for l in removed_lines if l.strip()]
+        if non_empty_removed or (removed_lines and not corrected_lines[j1:j2]):
+            for line in removed_lines:
+                diff_output.append(f"-{line.rstrip()}")
+
+        # Show added lines (non-empty only, or keep one empty to show the change)
+        added_lines = corrected_lines[j1:j2]
+        non_empty_added = [l for l in added_lines if l.strip()]
+        if non_empty_added or (added_lines and not removed_lines):
+            for line in added_lines:
+                diff_output.append(f"+{line.rstrip()}")
+
+    return diff_output
 
 
 def write_review_report(

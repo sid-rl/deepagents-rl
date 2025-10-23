@@ -101,39 +101,23 @@ Working directory: {self.current_working_directory}
 
 ## Workflow:
 
-1. Call `review_markdown_file(file)` - extracts all snippets
-2. For EACH snippet, spawn a `snippet_fixer` subagent using the `task` tool (spawn all in parallel)
-3. Each subagent will test and fix its snippet, returning a JSON result
-4. Collect all subagent results and call `finalize_review([results])` to update the markdown
+When asked to review a markdown file:
+1. Call `review_markdown_file(filepath)` - extracts all snippets
+2. Spawn a `snippet_fixer` subagent for EACH snippet (in parallel)
+3. Call `finalize_review([results])` with all subagent results
+
+Be direct and efficient - don't use extra tools like ls, find_markdown_files, or read_file unless explicitly needed.
+If given a file path, just review it immediately.
 
 ## Spawning snippet_fixer subagents:
 
-For each snippet, call task with:
 ```
-task(
-  subagent="snippet_fixer",
-  prompt="Test and fix this code snippet.
-
-Code:
-```python
-def factorial(n):
-    if n <= 1:
-        return 1
-    return n * factorial(n - 1)
-result = factorial('not a number')
-print(f'Result: {{result}}')
+task(subagent_type="snippet_fixer", description="Test and fix: <code snippet>\\n\\nLanguage: <lang>")
 ```
 
-Language: python
-Dependencies: [] (detect from imports if any)
-"
-)
-```
+The subagent returns: {{"success": bool, "original_code": str, "fixed_code": str, "error": str}}
 
-The subagent returns JSON like:
-{{"success": true, "original_code": "...", "fixed_code": "...", "error": ""}}
-
-Call finalize_review with ALL these results.
+Then call finalize_review with ALL these results.
 """
 
     def _create_cli_tools(self) -> list:
@@ -369,6 +353,52 @@ After all complete, call finalize_review with ALL the results."""
 
         return tools
 
+    def _display_tool_event(self, event_data: dict, console):
+        """Display a custom tool event."""
+        from rich.syntax import Syntax
+
+        event_kind = event_data.get("kind")
+
+        if event_kind == "snippet_extracted":
+            count = event_data.get("count", 0)
+            file = event_data.get("file", "")
+            console.print(f"[#2f6868]  ✅ Found {count} executable snippet{'s' if count != 1 else ''} in {file}[/#2f6868]")
+
+        elif event_kind == "snippet_detail":
+            num = event_data.get("num")
+            lang = event_data.get("language")
+            lines = event_data.get("lines")
+            code = event_data.get("code", "")
+            console.print(f"\n  [cyan]Snippet {num} ({lang}, {lines}):[/cyan]")
+            for line in code.split('\n')[:10]:
+                console.print(f"    [dim]{line}[/dim]")
+            if len(code.split('\n')) > 10:
+                console.print(f"    [dim]...[/dim]")
+
+        elif event_kind == "code_execution":
+            lang = event_data.get("language")
+            lines = event_data.get("lines")
+            success = event_data.get("success")
+            output = event_data.get("output", "")
+            error = event_data.get("error", "")
+
+            status = "✓" if success else "✗"
+            color = "#2f6868" if success else "red"
+            result = output[:100] if success else error.split('\n')[-1][:80]
+
+            console.print(f"\n[#beb4fd]🔧 execute_code_snippet[/#beb4fd] [dim]→[/dim] [{color}]{status} {lang}[/{color}] [dim]{lines} → {repr(result)}...[/dim]")
+
+        elif event_kind == "subagent_spawn":
+            subagent = event_data.get("subagent", "unknown")
+            snippet_info = event_data.get("snippet_info", "")
+            console.print(f"\n[yellow]🤖 Spawning subagent:[/yellow] [cyan]{subagent}[/cyan] [dim]{snippet_info}[/dim]")
+
+        elif event_kind == "subagent_complete":
+            subagent = event_data.get("subagent", "unknown")
+            success = event_data.get("success")
+            status = "✅" if success else "❌"
+            console.print(f"[yellow]{status} Subagent complete:[/yellow] [cyan]{subagent}[/cyan]")
+
     def process_message(self, message: str, console) -> str:
         """
         Process a user message with streaming output.
@@ -396,7 +426,7 @@ After all complete, call finalize_review with ALL the results."""
             for state in self.agent.stream(
                 {"messages": [HumanMessage(content=message)]},
                 config={"configurable": {"thread_id": self.thread_id}},
-                stream_mode="values"
+                stream_mode="values",
             ):
                 # state contains the full graph state including all messages
                 if not isinstance(state, dict) or "messages" not in state:
@@ -462,11 +492,44 @@ After all complete, call finalize_review with ALL the results."""
 
                                 # Special formatting for task (subagent spawning)
                                 if tool_name == "task":
-                                    subagent = tool_args.get('subagent', 'unknown')
-                                    prompt_preview = tool_args.get('prompt', '')[:80]
-                                    console.print(f"\n[yellow]🤖 Spawning subagent:[/yellow] [cyan]{subagent}[/cyan]")
-                                    if prompt_preview:
-                                        console.print(f"  [dim]{prompt_preview}...[/dim]")
+                                    subagent = tool_args.get('subagent_type', 'unknown')
+                                    description = tool_args.get('description', '')
+
+                                    # Extract language and code preview for snippet_fixer
+                                    if subagent == "snippet_fixer":
+                                        # Try to parse out the language
+                                        lang = "code"
+                                        if "Language:" in description:
+                                            lang_part = description.split("Language:")[-1].strip().split()[0].strip()
+                                            if lang_part:
+                                                lang = lang_part
+
+                                        # Get source file info from the context if available
+                                        source_info = ""
+                                        if hasattr(self, '_review_context'):
+                                            file_path = self._review_context.get('file_path')
+                                            if file_path:
+                                                source_info = f" from {file_path.name}"
+
+                                        # Extract first 5 lines of code
+                                        lines = description.split('\n')
+                                        code_lines = []
+                                        for line in lines:
+                                            if line.strip() and not line.startswith('Test and fix') and not line.startswith('Language'):
+                                                code_lines.append(line)
+                                                if len(code_lines) >= 5:
+                                                    break
+
+                                        # Display the snippet info
+                                        console.print(f"\n[yellow]🔧 Testing {lang} snippet{source_info}:[/yellow]")
+                                        for code_line in code_lines:
+                                            console.print(f"  [dim]{code_line}[/dim]")
+                                        if len(code_lines) >= 5:
+                                            console.print(f"  [dim]...[/dim]")
+                                    else:
+                                        # Generic subagent display
+                                        desc_preview = description[:60] + "..." if len(description) > 60 else description
+                                        console.print(f"\n[yellow]🤖 Spawning:[/yellow] [cyan]{subagent}[/cyan] [dim]{desc_preview}[/dim]")
                                     continue
 
                                 # For other tools, show them immediately
@@ -550,12 +613,25 @@ After all complete, call finalize_review with ALL the results."""
                                 subagent_name = "unknown"
                                 if tool_call_id in tool_call_details:
                                     _, args = tool_call_details[tool_call_id]
-                                    subagent_name = args.get('subagent', 'unknown')
+                                    subagent_name = args.get('subagent_type', 'unknown')
 
-                                console.print(f"\n[yellow]✅ Subagent complete:[/yellow] [cyan]{subagent_name}[/cyan]")
-                                # Show first 200 chars of result
-                                result_preview = result[:200] + "..." if len(result) > 200 else result
-                                console.print(f"  [dim]{result_preview}[/dim]\n")
+                                # For snippet_fixer, parse the result to show status
+                                if subagent_name == "snippet_fixer":
+                                    try:
+                                        import json
+                                        snippet_result = json.loads(result) if isinstance(result, str) else result
+                                        success = snippet_result.get("success", False)
+                                        status_icon = "✓" if success else "✗"
+                                        status_color = "#2f6868" if success else "red"
+                                        status_text = "passed" if success else "failed"
+                                        console.print(f"[{status_color}]  {status_icon} Snippet {status_text}[/{status_color}]")
+                                    except:
+                                        console.print(f"[#2f6868]  ✓ Snippet complete[/#2f6868]")
+                                else:
+                                    # Generic subagent result
+                                    console.print(f"\n[yellow]✅ Subagent complete:[/yellow] [cyan]{subagent_name}[/cyan]")
+                                    result_preview = result[:200] + "..." if len(result) > 200 else result
+                                    console.print(f"  [dim]{result_preview}[/dim]\n")
                                 continue
 
                             # Special formatting for review_markdown_file - show snippets
@@ -593,9 +669,19 @@ After all complete, call finalize_review with ALL the results."""
                                         # Show diff if there are changes
                                         if review_result.get("has_changes") and review_result.get("diff"):
                                             console.print(f"\n[dim]Changes:[/dim]")
-                                            from rich.syntax import Syntax
-                                            diff_syntax = Syntax(review_result["diff"], "diff", theme="monokai", line_numbers=False)
-                                            console.print(diff_syntax)
+                                            # Display diff with gentle colors
+                                            diff_text = review_result["diff"]
+                                            for line in diff_text.split('\n'):
+                                                if line.startswith('---') or line.startswith('+++'):
+                                                    console.print(f"[dim]{line}[/dim]")
+                                                elif line.startswith('@@'):
+                                                    console.print(f"[cyan]{line}[/cyan]")
+                                                elif line.startswith('+'):
+                                                    console.print(f"[#22863a]{line}[/#22863a]")  # Gentle green
+                                                elif line.startswith('-'):
+                                                    console.print(f"[#b31d28]{line}[/#b31d28]")  # Gentle red
+                                                else:
+                                                    console.print(f"[dim]{line}[/dim]")
                                         else:
                                             console.print(f"    [dim]No changes needed[/dim]")
                                         console.print()

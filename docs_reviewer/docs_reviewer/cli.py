@@ -34,12 +34,7 @@ def check_api_key() -> bool:
 def show_welcome():
     """Display welcome message with capabilities."""
     console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd] - AI-powered documentation code reviewer\n")
-    console.print("I can help you:")
-    console.print("  • Review markdown files and validate code snippets")
-    console.print("  • Find and list code snippets in documentation")
-    console.print("  • Generate corrected versions of docs with fixes")
-    console.print("  • Search for markdown files in your project")
-    console.print("\n[dim]Just tell me what you'd like to do, or type 'exit' to quit.[/dim]")
+    console.print("Please specify the name of the markdown file you'd like to review.")
 
 
 def show_setup_instructions():
