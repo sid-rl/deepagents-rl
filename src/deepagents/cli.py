@@ -521,7 +521,7 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
         system_prompt=system_prompt,
         tools=tools,
         memory_backend=backend,
-        long_term_backend=long_term_backend,
+        use_longterm_memory=long_term_backend,
         middleware=agent_middleware,
     ).with_config(config)
     
