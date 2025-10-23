@@ -78,8 +78,15 @@ def chat(
         "-m",
         help="Single message to process (non-interactive mode)",
     ),
+    no_mcp: bool = typer.Option(
+        False,
+        "--no-mcp",
+        help="Disable MCP integration for LangChain docs",
+    ),
 ) -> None:
     """Start interactive chat session with the docs reviewer agent."""
+    import asyncio
+
     # Check API key
     if not check_api_key():
         show_setup_instructions()
@@ -90,9 +97,30 @@ def chat(
         show_welcome()
         console.print()
 
+    # Run async initialization and chat loop
+    # Use asyncio.run to create a new event loop
+    try:
+        asyncio.run(_async_chat(message, enable_mcp=not no_mcp))
+    except RuntimeError as e:
+        if "asyncio.run() cannot be called from a running event loop" in str(e):
+            # Already in an async context (e.g., Jupyter)
+            # Get the current loop and run the coroutine
+            import sys
+            if sys.platform == 'win32':
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(_async_chat(message, enable_mcp=not no_mcp))
+        else:
+            raise
+
+
+async def _async_chat(message: Optional[str], enable_mcp: bool = True) -> None:
+    """Async chat handler for proper MCP initialization."""
     # Initialize the CLI agent (simple - just needs API key in env)
     try:
-        agent = DocsReviewerCLIAgent()
+        agent = DocsReviewerCLIAgent(enable_mcp=enable_mcp)
+        await agent.async_init()
     except Exception as e:
         console.print(f"[red]Error initializing agent: {e}[/red]")
         raise typer.Exit(1)
@@ -100,7 +128,7 @@ def chat(
     # Single message mode
     if message:
         console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd]")
-        response = agent.process_message(message, console)
+        response = await agent.process_message(message, console)
         console.print()
         return
 
@@ -108,6 +136,7 @@ def chat(
     conversation_active = True
 
     # Use prompt_toolkit for better input with persistent history
+    # IMPORTANT: Use async version (prompt_async) when in async context
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.history import FileHistory
@@ -130,7 +159,8 @@ def chat(
             # Get user input with history support
             if use_prompt_toolkit:
                 from prompt_toolkit.formatted_text import HTML
-                user_input = session.prompt(HTML('\n<prompt>You:</prompt> '))
+                # Use prompt_async() in async context, not prompt()!
+                user_input = await session.prompt_async(HTML('\n<prompt>You:</prompt> '))
             else:
                 user_input = Prompt.ask("\n[bold #beb4fd]You[/bold #beb4fd]")
 
@@ -144,7 +174,7 @@ def chat(
 
             # Process with agent - show streaming progress
             console.print("\n[bold #beb4fd]Docs Reviewer[/bold #beb4fd]")
-            response = agent.process_message(user_input, console)
+            response = await agent.process_message(user_input, console)
             console.print()
 
         except KeyboardInterrupt:

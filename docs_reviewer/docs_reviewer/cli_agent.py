@@ -25,13 +25,21 @@ class DocsReviewerState(TypedDict):
 class DocsReviewerCLIAgent:
     """Simple agent for natural language docs reviewing."""
 
-    def __init__(self):
-        """Initialize the CLI agent."""
+    def __init__(self, enable_mcp: bool = True):
+        """
+        Initialize the CLI agent.
+
+        Args:
+            enable_mcp: Whether to enable MCP tools for LangChain docs access
+        """
         import uuid
 
         self.current_working_directory = Path.cwd()
         self.thread_id = f"docs-reviewer-{uuid.uuid4().hex[:8]}"  # Unique thread per session
         self.last_message_count = 0  # Track how many messages we've displayed
+        self.enable_mcp = enable_mcp
+        self.mcp_manager = None
+        self.agent = None  # Will be initialized in async_init
 
         # Get API key
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -45,13 +53,38 @@ class DocsReviewerCLIAgent:
             api_key=api_key,
         )
 
-        # Create tools and agent
+        # Create base tools
         self.tools = self._create_cli_tools()
+
+    async def async_init(self) -> "DocsReviewerCLIAgent":
+        """
+        Async initialization for MCP tools.
+
+        This must be called before using the agent if MCP is enabled.
+
+        Returns:
+            Self for chaining
+        """
+        # Get MCP tools if enabled (for subagents only)
+        mcp_tools = []
+        if self.enable_mcp:
+            try:
+                from docs_reviewer.mcp_integration import get_langchain_docs_tools
+
+                mcp_tools = await get_langchain_docs_tools()
+            except Exception as e:
+                # MCP is optional - continue without it if it fails
+                print(f"Warning: Could not initialize MCP tools: {e}")
+                print("Continuing without LangChain docs access...")
 
         # Create code execution tool for subagents
         execute_code_snippet = create_code_execution_tool()
 
+        # Build subagent tools list - includes both execution and MCP tools
+        subagent_tools = [execute_code_snippet] + mcp_tools
+
         # Define snippet fixer subagent - handles ALL testing and fixing
+        # This subagent gets access to MCP tools for fetching LangChain docs
         snippet_fixer_subagent = {
             "name": "snippet_fixer",
             "description": "Test and fix a code snippet, returning the working version",
@@ -76,26 +109,44 @@ Important:
 - Be surgical with fixes - only change what's broken
 - Preserve original intent and structure
 - Give up after 3 fix attempts
+
+## LangChain Code Support:
+
+If the code uses LangChain/LangGraph and you encounter errors:
+- Use the 'fetch' tool to retrieve relevant documentation
+- Example: fetch(url="https://python.langchain.com/docs/concepts/...")
+- The docs can help you understand the correct API usage
+- Focus on fixing import errors, deprecated APIs, and incorrect usage patterns
 """,
-            "tools": [execute_code_snippet],
+            "tools": subagent_tools,  # Subagent gets both execute_code_snippet and fetch tools
             "model": self.llm,
         }
+
+        # Main agent only gets base tools (no MCP tools)
+        all_tools = self.tools
 
         # Create agent with checkpointer for conversation memory
         from langgraph.checkpoint.memory import MemorySaver
 
         self.agent = create_deep_agent(
             model=self.llm,
-            tools=self.tools,  # Main agent only has file/directory tools
-            system_prompt=self._get_system_prompt(),
+            tools=all_tools,  # Main agent has file/directory tools + MCP tools
+            system_prompt=self._get_system_prompt(has_mcp=False),  # Main agent doesn't get MCP tools
             checkpointer=MemorySaver(),  # In-memory checkpointer for conversation state
             context_schema=DocsReviewerState,  # Custom state schema with file cache
             subagents=[snippet_fixer_subagent],  # Subagent has execute_code_snippet
         )
 
-    def _get_system_prompt(self) -> str:
-        """Get the system prompt for the CLI agent."""
-        return f"""You are a documentation reviewer that validates and fixes code snippets in markdown files.
+        return self
+
+    def _get_system_prompt(self, has_mcp: bool = False) -> str:
+        """
+        Get the system prompt for the CLI agent.
+
+        Args:
+            has_mcp: Whether MCP tools are available
+        """
+        base_prompt = f"""You are a documentation reviewer that validates and fixes code snippets in markdown files.
 
 Working directory: {self.current_working_directory}
 
@@ -119,6 +170,24 @@ The subagent returns: {{"success": bool, "original_code": str, "fixed_code": str
 
 Then call finalize_review with ALL these results.
 """
+        if has_mcp:
+            base_prompt += """
+
+## Web Fetch Tool (MCP):
+
+You have access to a 'fetch' tool that can retrieve and convert web pages to markdown.
+Use this to access LangChain documentation when:
+- You need information about LangChain APIs, classes, or functions
+- You're reviewing code that uses LangChain
+- You need examples or best practices for LangChain usage
+
+Example URLs:
+- https://python.langchain.com/docs/ - Main LangChain docs
+- https://langchain-ai.github.io/langgraph/ - LangGraph docs
+
+The fetch tool converts HTML to markdown for easier processing.
+"""
+        return base_prompt
 
     def _create_cli_tools(self) -> list:
         """Create tools for the CLI agent."""
@@ -399,7 +468,7 @@ After all complete, call finalize_review with ALL the results."""
             status = "✅" if success else "❌"
             console.print(f"[yellow]{status} Subagent complete:[/yellow] [cyan]{subagent}[/cyan]")
 
-    def process_message(self, message: str, console) -> str:
+    async def process_message(self, message: str, console) -> str:
         """
         Process a user message with streaming output.
 
@@ -412,6 +481,10 @@ After all complete, call finalize_review with ALL the results."""
         """
         import json
         from rich.syntax import Syntax
+
+        # Ensure agent is initialized
+        if self.agent is None:
+            await self.async_init()
 
         # Stream the agent's response
         try:

@@ -92,9 +92,9 @@ def init_config(config_path: Path) -> None:
         },
         "mcp_servers": [
             {
-                "name": "langchain-docs",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-langchain-docs"],
+                "name": "fetch",
+                "command": "uvx",
+                "args": ["mcp-server-fetch"],
                 "env": {},
             }
         ],
