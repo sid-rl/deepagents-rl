@@ -308,11 +308,12 @@ class FilesystemBackend:
                     results.append(f"  {line_num}: {line}")
             return "\n".join(results)
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
         
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            path: Base path to search from (default "/")
             runtime: Optional ToolRuntime (ignored by FilesystemBackend).
         
         Returns:
@@ -321,13 +322,20 @@ class FilesystemBackend:
         if pattern.startswith("/"):
             pattern = pattern.lstrip("/")
         
+        if path == "/":
+            search_path = self.cwd
+        else:
+            search_path = self._resolve_path(path)
+        
+        if not search_path.exists() or not search_path.is_dir():
+            return []
+        
         results = []
-        search_path = self.cwd
         
         try:
-            for path in search_path.glob(pattern):
-                if path.is_file():
-                    abs_path = str(path)
+            for matched_path in search_path.glob(pattern):
+                if matched_path.is_file():
+                    abs_path = str(matched_path)
                     if not self.virtual_mode:
                         results.append(abs_path)
                         continue

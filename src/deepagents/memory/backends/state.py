@@ -15,6 +15,8 @@ from .utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
+    _glob_search_files,
+    _grep_search_files,
 )
 
 
@@ -217,78 +219,24 @@ class StateBackend:
             raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         
-        regex = re.compile(re.escape(pattern))
-        
-        if include:
-            files_to_search_list = self.glob(include, runtime=runtime)
-            files_to_search = {fp: files.get(fp) for fp in files_to_search_list if fp in files}
-        else:
-            files_to_search = files
-        
-        if path != "/":
-            files_to_search = {fp: data for fp, data in files_to_search.items() if fp.startswith(path)}
-        
-        file_matches = {}
-        
-        for fp, file_data in files_to_search.items():
-            if file_data is None:
-                continue
-            
-            content = file_data_to_string(file_data)
-            lines = content.splitlines()
-            
-            matches = []
-            for line_num, line in enumerate(lines, start=1):
-                if regex.search(line):
-                    matches.append((line_num, line.rstrip()))
-            
-            if matches:
-                file_matches[fp] = matches
-        
-        if not file_matches:
-            return f"No matches found for pattern: '{pattern}'"
-        
-        if output_mode == "files_with_matches":
-            return "\n".join(sorted(file_matches.keys()))
-        elif output_mode == "count":
-            results = []
-            for fp in sorted(file_matches.keys()):
-                count = len(file_matches[fp])
-                results.append(f"{fp}: {count}")
-            return "\n".join(results)
-        else:
-            results = []
-            for fp in sorted(file_matches.keys()):
-                results.append(f"{fp}:")
-                for line_num, line in file_matches[fp]:
-                    results.append(f"  {line_num}: {line}")
-            return "\n".join(results)
+        return _grep_search_files(files, pattern, path, include, output_mode)
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
         
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            path: Base path to search from (default "/")
             runtime: ToolRuntime to access state.
         
         Returns:
             List of absolute file paths matching the pattern.
         """
-        from fnmatch import fnmatch
-        
         if runtime is None:
             raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         
-        if pattern.startswith("/"):
-            pattern_stripped = pattern.lstrip("/")
-        else:
-            pattern_stripped = pattern
-        
-        results = []
-        for fp in files.keys():
-            fp_stripped = fp.lstrip("/")
-            if fnmatch(fp_stripped, pattern_stripped):
-                results.append(fp)
-        breakpoint()
-        return sorted(results)
+        result = _glob_search_files(files, pattern, path)
+        if result == "No files found":
+            return []
+        return result.split("\n")

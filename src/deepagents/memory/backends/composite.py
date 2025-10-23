@@ -250,11 +250,12 @@ class CompositeBackend:
         
         return "\n".join(all_results)
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern across all backends.
         
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            path: Base path to search from (default "/")
             runtime: Optional ToolRuntime for backends that need it.
         
         Returns:
@@ -267,16 +268,16 @@ class CompositeBackend:
                 search_pattern = pattern[len(route_prefix) - 1:]
                 if search_pattern.startswith("/"):
                     search_pattern = search_pattern[1:]
-                matches = backend.glob(search_pattern, runtime=runtime)
+                matches = backend.glob(search_pattern, path, runtime=runtime)
                 results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
                 return sorted(results)
         
-        default_matches = self.default.glob(pattern, runtime=runtime)
+        default_matches = self.default.glob(pattern, path, runtime=runtime)
         results.extend(default_matches)
         
         for route_prefix, backend in self.routes.items():
             pattern_without_slash = pattern.lstrip("/")
-            matches = backend.glob(pattern_without_slash, runtime=runtime)
+            matches = backend.glob(pattern_without_slash, path, runtime=runtime)
             results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
         
         return sorted(results)

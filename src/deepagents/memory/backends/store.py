@@ -16,6 +16,8 @@ from deepagents.memory.backends.utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
+    _glob_search_files,
+    _grep_search_files,
 )
 
 
@@ -278,86 +280,47 @@ class StoreBackend:
         store = self._get_store(runtime)
         namespace = self._get_namespace()
         
-        regex = re.compile(re.escape(pattern))
+        items = store.search(namespace)
         
-        if include:
-            files_to_search_list = self.glob(include, runtime=runtime)
-            items = [store.get(namespace, fp) for fp in files_to_search_list]
-            items = [item for item in items if item is not None]
-        else:
-            items = store.search(namespace)
-        
-        if path != "/":
-            items = [item for item in items if item.key.startswith(path)]
-        
-        file_matches = {}
-        
+        files = {}
         for item in items:
             if item is None:
                 continue
-            
             try:
                 file_data = self._convert_store_item_to_file_data(item)
+                files[item.key] = file_data
             except ValueError:
                 continue
-            
-            content = file_data_to_string(file_data)
-            lines = content.splitlines()
-            
-            matches = []
-            for line_num, line in enumerate(lines, start=1):
-                if regex.search(line):
-                    matches.append((line_num, line.rstrip()))
-            
-            if matches:
-                file_matches[item.key] = matches
         
-        if not file_matches:
-            return f"No matches found for pattern: '{pattern}'"
-        
-        if output_mode == "files_with_matches":
-            return "\n".join(sorted(file_matches.keys()))
-        elif output_mode == "count":
-            results = []
-            for fp in sorted(file_matches.keys()):
-                count = len(file_matches[fp])
-                results.append(f"{fp}: {count}")
-            return "\n".join(results)
-        else:
-            results = []
-            for fp in sorted(file_matches.keys()):
-                results.append(f"{fp}:")
-                for line_num, line in file_matches[fp]:
-                    results.append(f"  {line_num}: {line}")
-            return "\n".join(results)
+        return _grep_search_files(files, pattern, path, include, output_mode)
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
         
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            path: Base path to search from (default "/")
             runtime: ToolRuntime to access store.
         
         Returns:
             List of absolute file paths matching the pattern.
         """
-        from fnmatch import fnmatch
-        
         store = self._get_store(runtime)
         namespace = self._get_namespace()
         
-        if pattern.startswith("/"):
-            pattern_stripped = pattern.lstrip("/")
-        else:
-            pattern_stripped = pattern
-        
         items = store.search(namespace)
         
-        results = []
+        files = {}
         for item in items:
-            fp = item.key
-            fp_stripped = fp.lstrip("/")
-            if fnmatch(fp_stripped, pattern_stripped):
-                results.append(fp)
+            if item is None:
+                continue
+            try:
+                file_data = self._convert_store_item_to_file_data(item)
+                files[item.key] = file_data
+            except ValueError:
+                continue
         
-        return sorted(results)
+        result = _glob_search_files(files, pattern, path)
+        if result == "No files found":
+            return []
+        return result.split("\n")
