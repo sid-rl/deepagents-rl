@@ -116,7 +116,9 @@ def chat(
 
     # Single message mode
     if message:
-        response = agent.process_message(message)
+        console.print("\n[bold green]Agent[/bold green]")
+        response = agent.process_message(message, console)
+        console.print()
         console.print(Markdown(response))
         return
 
@@ -135,9 +137,10 @@ def chat(
             if not user_input.strip():
                 continue
 
-            # Process with agent
+            # Process with agent - show streaming progress
             console.print("\n[bold green]Agent[/bold green]")
-            response = agent.process_message(user_input)
+            response = agent.process_message(user_input, console)
+            console.print()
             console.print(Markdown(response))
             console.print()
 

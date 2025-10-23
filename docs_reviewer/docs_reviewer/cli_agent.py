@@ -254,35 +254,75 @@ Always resolve relative file paths based on the current working directory.
 
         return tools
 
-    def process_message(self, message: str) -> str:
+    def process_message(self, message: str, console) -> str:
         """
-        Process a user message and return the agent's response.
+        Process a user message with streaming output.
 
         Args:
             message: User's message
+            console: Rich console for output
 
         Returns:
             Agent's response as a string
         """
+        from rich.live import Live
+        from rich.panel import Panel
+        from rich.text import Text
+
         # Add to conversation history
         self.conversation_history.append(HumanMessage(content=message))
 
-        # Invoke the agent
+        # Stream the agent's response
         try:
-            response = self.agent.invoke({"messages": self.conversation_history})
+            final_response = ""
 
-            # Extract the last message
+            # Stream events from the agent
+            for event in self.agent.stream({"messages": self.conversation_history}, stream_mode="values"):
+                # Check for the latest message
+                if "messages" in event:
+                    latest_msg = event["messages"][-1]
+
+                    # Show tool calls
+                    if hasattr(latest_msg, "tool_calls") and latest_msg.tool_calls:
+                        for tool_call in latest_msg.tool_calls:
+                            console.print(f"[yellow]🔧 Using tool: [bold]{tool_call['name']}[/bold][/yellow]")
+
+                    # Show tool responses
+                    if hasattr(latest_msg, "name") and latest_msg.name:
+                        console.print(f"[dim]  ✓ Tool [bold]{latest_msg.name}[/bold] completed[/dim]")
+
+                    # Capture final AI response
+                    if hasattr(latest_msg, "content") and isinstance(latest_msg.content, str):
+                        if latest_msg.content and hasattr(latest_msg, "type") and latest_msg.type == "ai":
+                            final_response = latest_msg.content
+
+                # Show todos if they're updated
+                if "todos" in event:
+                    todos = event["todos"]
+                    if todos:
+                        console.print("\n[cyan]📋 Task Plan:[/cyan]")
+                        for todo in todos:
+                            status = todo.get("status", "pending")
+                            status_emoji = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(status, "•")
+                            content = todo.get("content", "Unknown task")
+                            console.print(f"  {status_emoji} {content}")
+                        console.print()
+
+            # If we got a final response, use it
+            if final_response:
+                self.conversation_history.append(AIMessage(content=final_response))
+                return final_response
+
+            # Otherwise get the last message from a full invoke
+            response = self.agent.invoke({"messages": self.conversation_history})
             last_message = response["messages"][-1]
 
-            # Get content
             if hasattr(last_message, "content"):
                 response_text = last_message.content
             else:
                 response_text = str(last_message)
 
-            # Add to history
             self.conversation_history.append(AIMessage(content=response_text))
-
             return response_text
 
         except Exception as e:
