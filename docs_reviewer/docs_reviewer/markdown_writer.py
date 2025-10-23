@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 from datetime import datetime
+import difflib
 
 from docs_reviewer.markdown_parser import CodeSnippet
 
@@ -12,25 +13,31 @@ def write_corrected_markdown(
     output_file: Path,
     snippets: list[CodeSnippet],
     results: list[dict[str, Any]],
-) -> None:
+    inline: bool = True,
+) -> dict[str, Any]:
     """
     Write a corrected markdown file with updated code snippets.
 
     Args:
         original_file: Path to the original markdown file
-        output_file: Path to write the corrected markdown
+        output_file: Path to write the corrected markdown (ignored if inline=True)
         snippets: List of original code snippets
         results: List of review results for each snippet
+        inline: If True, edits the original file in place. If False, creates a new file.
+
+    Returns:
+        Dictionary with diff information
     """
     # Read the original file
     with open(original_file, encoding="utf-8") as f:
-        lines = f.readlines()
+        original_lines = f.readlines()
 
     # Create a mapping of snippet indices to results
     result_map = {r["snippet_index"]: r for r in results}
 
     # Track which lines need to be replaced
     replacements: dict[int, list[str]] = {}
+    has_changes = False
 
     for i, snippet in enumerate(snippets):
         if i not in result_map:
@@ -40,13 +47,14 @@ def write_corrected_markdown(
 
         # Only replace if there were corrections
         if result["corrected_code"] != result["original_code"] or not result["success"]:
+            has_changes = True
             start_line = snippet["start_line"] - 1  # Convert to 0-indexed
             end_line = snippet["end_line"]
 
             # Build the replacement content
             replacement_lines = []
 
-            # Add a comment about the correction
+            # Add a comment about the correction if snippet failed
             if not result["success"]:
                 replacement_lines.append(f"<!-- REVIEW NOTE: This snippet had issues -->\n")
                 replacement_lines.append(f"<!-- {_escape_html_comment(result['analysis'][:200])} -->\n")
@@ -61,28 +69,49 @@ def write_corrected_markdown(
 
             replacements[start_line] = replacement_lines
 
+    # Build the corrected content
+    corrected_lines = []
+    i = 0
+    while i < len(original_lines):
+        if i in replacements:
+            # Write the replacement
+            for line in replacements[i]:
+                corrected_lines.append(line)
+
+            # Skip the original code block
+            # Find the closing ```
+            i += 1
+            while i < len(original_lines) and not original_lines[i].strip().startswith("```"):
+                i += 1
+            i += 1  # Skip the closing ```
+        else:
+            corrected_lines.append(original_lines[i])
+            i += 1
+
+    # Determine output path
+    if inline:
+        target_file = original_file
+    else:
+        target_file = output_file
+
     # Write the corrected file
-    with open(output_file, "w", encoding="utf-8") as f:
-        # Add header comment
-        f.write(f"<!-- Corrected by Docs Reviewer on {datetime.now().isoformat()} -->\n")
-        f.write(f"<!-- Original file: {original_file} -->\n\n")
+    with open(target_file, "w", encoding="utf-8") as f:
+        f.writelines(corrected_lines)
 
-        i = 0
-        while i < len(lines):
-            if i in replacements:
-                # Write the replacement
-                for line in replacements[i]:
-                    f.write(line)
+    # Generate unified diff
+    diff_lines = list(difflib.unified_diff(
+        original_lines,
+        corrected_lines,
+        fromfile=str(original_file),
+        tofile=str(target_file),
+        lineterm='',
+    ))
 
-                # Skip the original code block
-                # Find the closing ```
-                i += 1
-                while i < len(lines) and not lines[i].strip().startswith("```"):
-                    i += 1
-                i += 1  # Skip the closing ```
-            else:
-                f.write(lines[i])
-                i += 1
+    return {
+        "has_changes": has_changes,
+        "diff": '\n'.join(diff_lines),
+        "target_file": str(target_file),
+    }
 
 
 def write_review_report(

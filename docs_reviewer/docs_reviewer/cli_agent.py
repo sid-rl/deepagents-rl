@@ -7,11 +7,19 @@ from typing import Any, Optional
 from langchain_anthropic import ChatAnthropic
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage
+from typing import TypedDict, Annotated
+from langgraph.graph.message import add_messages
 
 from deepagents import create_deep_agent
 from docs_reviewer.markdown_parser import extract_code_snippets, filter_executable_snippets, categorize_snippets
 from docs_reviewer.markdown_writer import write_corrected_markdown, write_review_report
 from docs_reviewer.agent import create_code_execution_tool
+
+
+class DocsReviewerState(TypedDict):
+    """State schema for the docs reviewer agent."""
+    messages: Annotated[list, add_messages]
+    file_snippets_cache: dict[str, dict]  # Maps file paths to snippet data
 
 
 class DocsReviewerCLIAgent:
@@ -51,6 +59,7 @@ class DocsReviewerCLIAgent:
             tools=all_tools,
             system_prompt=self._get_system_prompt(),
             checkpointer=MemorySaver(),  # In-memory checkpointer for conversation state
+            context_schema=DocsReviewerState,  # Custom state schema with file cache
         )
 
     def _get_system_prompt(self) -> str:
@@ -68,7 +77,7 @@ Working directory: {self.current_working_directory}
    - Example: execute_code_snippet(code="import pandas as pd...", language="python", dependencies=["pandas"])
    - You can make multiple execute_code_snippet calls at the same time
    - This is the key to fast reviews - parallel execution!
-4. Use `finalize_review` to generate the corrected markdown and report files
+4. Use `finalize_review` to apply inline edits and show the diff
 
 ## execute_code_snippet Tool Details:
 
@@ -88,6 +97,7 @@ For **Bash** snippets:
 
 ## Important Notes:
 
+- Files are edited inline (no separate _corrected.md files)
 - LangGraph will automatically execute parallel tool calls concurrently
 - Always call execute_code_snippet IN PARALLEL for all snippets (not one at a time)
 - Analyze code to detect required dependencies from import statements
@@ -104,6 +114,8 @@ For **Bash** snippets:
             """
             List all code snippets found in a markdown file without executing them.
 
+            This tool caches the snippet data so it can be reused by review_markdown_file.
+
             Args:
                 markdown_file: Path to the markdown file (relative or absolute)
 
@@ -118,9 +130,23 @@ For **Bash** snippets:
                 if not file_path.exists():
                     return {"error": f"File not found: {file_path}"}
 
+                # Extract snippets
                 snippets = extract_code_snippets(file_path)
                 executable = filter_executable_snippets(snippets)
                 categories = categorize_snippets(snippets)
+
+                # Store in cache for later use by review_markdown_file
+                file_key = str(file_path)
+                cache_data = {
+                    "snippets": snippets,
+                    "executable": executable,
+                    "file_path": file_path,
+                }
+
+                # Store in instance variable for immediate access
+                if not hasattr(self, '_file_cache'):
+                    self._file_cache = {}
+                self._file_cache[file_key] = cache_data
 
                 return {
                     "file": str(file_path),
@@ -145,6 +171,9 @@ For **Bash** snippets:
             """
             Review a markdown file and return the list of code snippets to execute.
 
+            If you previously called list_snippets on this file, I'll reuse that data
+            to avoid redundant work!
+
             IMPORTANT: After calling this tool, you MUST call execute_code_snippet for EACH
             snippet returned. You can call execute_code_snippet multiple times IN PARALLEL
             to speed up the review process.
@@ -164,13 +193,23 @@ For **Bash** snippets:
                 if not file_path.exists():
                     return f"Error: File not found: {file_path}"
 
-                # Extract snippets
-                snippets = extract_code_snippets(file_path)
-                if not snippets:
-                    return "Error: No code snippets found in file"
+                file_key = str(file_path)
 
-                # Get executable snippets
-                executable = filter_executable_snippets(snippets)
+                # Check if we have cached data from list_snippets
+                if hasattr(self, '_file_cache') and file_key in self._file_cache:
+                    cache_data = self._file_cache[file_key]
+                    snippets = cache_data["snippets"]
+                    executable = cache_data["executable"]
+                    used_cache = True
+                else:
+                    # Extract snippets fresh
+                    snippets = extract_code_snippets(file_path)
+                    if not snippets:
+                        return "Error: No code snippets found in file"
+
+                    # Get executable snippets
+                    executable = filter_executable_snippets(snippets)
+                    used_cache = False
 
                 if not executable:
                     return "No executable code snippets found in this file."
@@ -194,7 +233,10 @@ For **Bash** snippets:
 
                 snippet_list = "\n".join(snippet_details)
 
-                return f"""Found {len(executable)} executable code snippets in {file_path.name}:
+                # Indicate if we reused cached data
+                cache_note = " (reusing previously scanned snippets)" if used_cache else ""
+
+                return f"""Found {len(executable)} executable code snippets in {file_path.name}{cache_note}:
 
 {snippet_list}
 
@@ -211,9 +253,9 @@ After all snippets execute, call finalize_review with the results."""
                 return f"Error: {str(e)}"
 
         @tool
-        def finalize_review(execution_results: list[str]) -> dict[str, Any]:
+        def finalize_review(execution_results: list[str]) -> str:
             """
-            Finalize the review by generating corrected markdown and report files.
+            Finalize the review by applying inline edits to the markdown file.
 
             Call this AFTER you have executed all code snippets using execute_code_snippet.
 
@@ -222,26 +264,18 @@ After all snippets execute, call finalize_review with the results."""
                                  Each should be: {"success": bool, "output": str, "error": str}
 
             Returns:
-                Dictionary with file paths and summary statistics
+                JSON string with diff and summary statistics
             """
             import json
 
             try:
                 if not hasattr(self, '_review_context'):
-                    return {"error": "No active review context. Call review_markdown_file first."}
+                    return json.dumps({"error": "No active review context. Call review_markdown_file first."})
 
                 context = self._review_context
                 file_path = context["file_path"]
                 snippets = context["snippets"]
                 executable = context["executable"]
-
-                # Set output path
-                if context.get("output_file"):
-                    output_path = Path(context["output_file"])
-                    if not output_path.is_absolute():
-                        output_path = self.current_working_directory / output_path
-                else:
-                    output_path = file_path.parent / f"{file_path.stem}_corrected.md"
 
                 # Parse execution results
                 results = []
@@ -262,18 +296,20 @@ After all snippets execute, call finalize_review with the results."""
                         "success": exec_result.get("success", False),
                         "analysis": analysis,
                         "original_code": snippet["code"],
-                        "corrected_code": snippet["code"],
+                        "corrected_code": snippet["code"],  # For now, no corrections - just validation
                         "language": snippet["language"],
                         "start_line": snippet["start_line"],
                         "end_line": snippet["end_line"],
                     })
 
-                # Write corrected markdown
-                write_corrected_markdown(file_path, output_path, snippets, results)
-
-                # Generate report
-                report_path = file_path.parent / f"{file_path.stem}_review_report.md"
-                write_review_report(report_path, file_path, snippets, results)
+                # Write corrected markdown with inline editing
+                diff_info = write_corrected_markdown(
+                    file_path,
+                    file_path,  # Output path (ignored in inline mode)
+                    snippets,
+                    results,
+                    inline=True  # Enable inline editing
+                )
 
                 # Calculate stats
                 total = len(results)
@@ -283,18 +319,18 @@ After all snippets execute, call finalize_review with the results."""
                 # Clear context
                 del self._review_context
 
-                return {
+                return json.dumps({
                     "success": True,
-                    "original_file": str(file_path),
-                    "corrected_file": str(output_path),
-                    "report_file": str(report_path),
+                    "file": str(file_path),
                     "total_snippets": total,
                     "successful": successful,
                     "failed": failed,
                     "success_rate": f"{(successful / total * 100):.1f}%" if total > 0 else "0%",
-                }
+                    "has_changes": diff_info["has_changes"],
+                    "diff": diff_info["diff"],
+                })
             except Exception as e:
-                return {"error": str(e)}
+                return json.dumps({"error": str(e)})
 
         @tool
         def change_directory(directory: str) -> dict[str, Any]:
@@ -458,11 +494,11 @@ After all snippets execute, call finalize_review with the results."""
                                             # Format tool call nicely - but only show args if they're concise
                                             args_str = json.dumps(tool_args)
                                             if len(args_str) > 150:
-                                                # Too verbose, just show the tool name
-                                                console.print(f"\n[yellow]→ {tool_name}[/yellow]")
+                                                # Too verbose, just show the tool name with emoji
+                                                console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
                                             else:
                                                 # Show args nicely if they're reasonable
-                                                console.print(f"\n[yellow]→ {tool_name}[/yellow]")
+                                                console.print(f"\n[#beb4fd]🔧 {tool_name}[/#beb4fd]")
                                                 if tool_args:
                                                     for key, value in tool_args.items():
                                                         if isinstance(value, str) and len(value) > 60:
@@ -504,22 +540,22 @@ After all snippets execute, call finalize_review with the results."""
 
                                             if exec_result.get("success"):
                                                 output = exec_result.get("output", "")
-                                                preview = output[:50] + "..." if len(output) > 50 else output
-                                                console.print(f"[green]  ✓ {language}[/green]", end="")
-                                                if preview:
-                                                    console.print(f" → {repr(preview)}")
+                                                preview = output[:100] + "..." if len(output) > 100 else output
+                                                console.print(f"[#2f6868]  ✓ {language}[/#2f6868]", end="")
+                                                if preview.strip():
+                                                    console.print(f" [dim]→[/dim] {repr(preview)}")
                                                 else:
                                                     console.print()
                                             else:
                                                 error = exec_result.get("error", "Unknown error")
-                                                # Show first line of error
+                                                # Show last line of error (usually most useful)
                                                 error_lines = error.split('\n')
-                                                error_preview = error_lines[-1] if error_lines else error
-                                                if len(error_preview) > 60:
-                                                    error_preview = error_preview[:60] + "..."
-                                                console.print(f"[red]  ✗ {language}[/red] → {error_preview}")
+                                                error_preview = error_lines[-1].strip() if error_lines else error
+                                                if len(error_preview) > 80:
+                                                    error_preview = error_preview[:80] + "..."
+                                                console.print(f"[red]  ✗ {language}[/red] [dim]→[/dim] {error_preview}")
                                         except (json.JSONDecodeError, TypeError):
-                                            console.print(f"[dim]  ✓[/dim]")
+                                            console.print(f"[#2f6868]  ✓[/#2f6868]")
                                         continue
 
                                     # Check for errors in other tools
@@ -530,53 +566,65 @@ After all snippets execute, call finalize_review with the results."""
                                     # Special formatting for list_snippets
                                     if tool_name == "list_snippets" and isinstance(result, dict):
                                         total = result.get("total_snippets", 0)
-                                        console.print(f"[green]  ✓ Found {total} snippet{'s' if total != 1 else ''}[/green]")
+                                        console.print(f"[#2f6868]  ✅ Found {total} snippet{'s' if total != 1 else ''}[/#2f6868]")
 
                                         snippets = result.get("snippets", [])
                                         if snippets:
                                             for i, snip in enumerate(snippets, 1):
                                                 lang = snip.get("language", "unknown")
                                                 lines = snip.get("lines", "?")
-                                                console.print(f"    {i}. [cyan]{lang}[/cyan] (lines {lines})")
+                                                console.print(f"    [dim]{i}.[/dim] [cyan]{lang}[/cyan] [dim](lines {lines})[/dim]")
                                         console.print()
 
-                                    # Special formatting for review_markdown_file
-                                    elif tool_name == "review_markdown_file" and isinstance(result, dict):
-                                        if result.get("success"):
-                                            total = result.get("total_snippets", 0)
-                                            successful = result.get("successful", 0)
-                                            failed = result.get("failed", 0)
+                                    # Special formatting for finalize_review - show diff
+                                    elif tool_name == "finalize_review":
+                                        try:
+                                            review_result = json.loads(result) if isinstance(result, str) else result
 
-                                            console.print(f"[green]  ✓ Review complete[/green]")
-                                            console.print(f"    {successful}/{total} passed")
+                                            if review_result.get("success"):
+                                                total = review_result.get("total_snippets", 0)
+                                                successful = review_result.get("successful", 0)
+                                                failed = review_result.get("failed", 0)
 
-                                            if failed > 0:
-                                                console.print(f"    [yellow]{failed} failed[/yellow]")
+                                                console.print(f"[#2f6868]  ✅ Review finalized[/#2f6868]")
+                                                console.print(f"    [dim]{successful}/{total} passed[/dim]", end="")
+                                                if failed > 0:
+                                                    console.print(f", [yellow]{failed} failed[/yellow]")
+                                                else:
+                                                    console.print()
 
-                                            corrected = result.get("corrected_file", "")
-                                            if corrected:
-                                                console.print(f"    [dim]→ {corrected}[/dim]")
-                                            console.print()
+                                                # Show diff if there are changes
+                                                if review_result.get("has_changes") and review_result.get("diff"):
+                                                    console.print(f"\n[dim]Changes:[/dim]")
+                                                    from rich.syntax import Syntax
+                                                    diff_syntax = Syntax(review_result["diff"], "diff", theme="monokai", line_numbers=False)
+                                                    console.print(diff_syntax)
+                                                else:
+                                                    console.print(f"    [dim]No changes needed[/dim]")
+                                                console.print()
+                                        except (json.JSONDecodeError, TypeError):
+                                            console.print(f"[#2f6868]  ✅[/#2f6868]\n")
+                                        continue
 
                                     # Special formatting for find_markdown_files
                                     elif tool_name == "find_markdown_files" and isinstance(result, dict):
                                         count = result.get("count", 0)
-                                        console.print(f"[green]  ✓ Found {count} markdown file{'s' if count != 1 else ''}[/green]")
+                                        console.print(f"[#2f6868]  ✅ Found {count} markdown file{'s' if count != 1 else ''}[/#2f6868]")
                                         files = result.get("files", [])
                                         if files:
                                             for f in files[:10]:  # Show first 10
-                                                console.print(f"    • {f}")
+                                                console.print(f"    [dim]•[/dim] {f}")
                                             if len(files) > 10:
                                                 console.print(f"    [dim]... and {len(files) - 10} more[/dim]")
                                         console.print()
 
                                     # Generic success for other tools
                                     elif isinstance(result, dict) and result.get("success"):
-                                        console.print(f"[green]  ✓ {tool_name}[/green]\n")
+                                        console.print(f"[#2f6868]  ✅ {tool_name}[/#2f6868]\n")
 
                                     else:
                                         # Default: just show completion
-                                        console.print(f"[dim]  ✓[/dim]\n")
+                                        console.print(f"[#2f6868]  ✅[/#2f6868]\n")
 
                                 except (json.JSONDecodeError, TypeError):
                                     # Non-JSON response, just show completion

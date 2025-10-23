@@ -109,12 +109,35 @@ def chat(
         console.print()
         return
 
-    # Interactive chat loop
+    # Interactive chat loop with command history
     conversation_active = True
+    command_history = []
+    history_index = -1
+
+    # Use prompt_toolkit for better input with history
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.history import InMemoryHistory
+        from prompt_toolkit.styles import Style
+
+        prompt_history = InMemoryHistory()
+        prompt_style = Style.from_dict({
+            'prompt': '#beb4fd bold',
+        })
+        session = PromptSession(history=prompt_history, style=prompt_style)
+        use_prompt_toolkit = True
+    except ImportError:
+        use_prompt_toolkit = False
+        console.print("[dim]Tip: Install prompt_toolkit for command history (pip install prompt_toolkit)[/dim]\n")
+
     while conversation_active:
         try:
-            # Get user input
-            user_input = Prompt.ask("\n[bold #beb4fd]You[/bold #beb4fd]")
+            # Get user input with history support
+            if use_prompt_toolkit:
+                from prompt_toolkit.formatted_text import HTML
+                user_input = session.prompt(HTML('\n<prompt>You:</prompt> '))
+            else:
+                user_input = Prompt.ask("\n[bold #beb4fd]You[/bold #beb4fd]")
 
             if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
                 console.print()
