@@ -1,206 +1,216 @@
-"""DeepAgent integration for docs reviewing."""
+"""Code execution via bash with uv/uvx for isolated environments."""
 
-import os
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import Any, Callable, Optional
-from langchain_anthropic import ChatAnthropic
+from typing import Any, Optional
 from langchain_core.tools import tool
 
-from deepagents import create_deep_agent
-from docs_reviewer.markdown_parser import CodeSnippet, filter_executable_snippets
+
+def create_code_execution_tool():
+    """
+    Create a tool that executes code snippets using bash.
+
+    For Python: Uses uv/uvx to create isolated environments with dependencies
+    For JavaScript: Uses node directly
+    For Bash: Executes directly
+
+    This tool will be called multiple times in parallel by the main agent.
+    """
+
+    @tool
+    def execute_code_snippet(
+        code: str,
+        language: str,
+        dependencies: Optional[list[str]] = None,
+        python_version: Optional[str] = None
+    ) -> str:
+        """
+        Execute a code snippet in an isolated environment and validate it works.
+
+        This tool runs code locally using bash. For Python, it uses uv/uvx to create
+        isolated environments with specified dependencies.
+
+        Args:
+            code: The code to execute
+            language: Programming language (python, javascript, bash, etc.)
+            dependencies: List of package dependencies (e.g., ["pandas", "requests"])
+            python_version: Python version to use (e.g., "3.11", "3.12")
+
+        Returns:
+            JSON string with execution results: {"success": bool, "output": str, "error": str}
+        """
+        dependencies = dependencies or []
+
+        try:
+            if language.lower() in ('python', 'py'):
+                return _execute_python(code, dependencies, python_version)
+            elif language.lower() in ('javascript', 'js'):
+                return _execute_javascript(code, dependencies)
+            elif language.lower() in ('bash', 'sh'):
+                return _execute_bash(code)
+            else:
+                return f'{{"success": false, "output": "", "error": "Unsupported language: {language}"}}'
+
+        except Exception as e:
+            return f'{{"success": false, "output": "", "error": "Execution error: {str(e)}"}}'
+
+    def _execute_python(code: str, dependencies: list[str], python_version: Optional[str]) -> str:
+        """Execute Python code using uvx for isolated environment."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            script_file = tmp_path / "script.py"
+            script_file.write_text(code)
+
+            # Build uvx command
+            if dependencies:
+                # Use uvx to run with dependencies
+                deps_args = " ".join([f"--with {dep}" for dep in dependencies])
+                python_flag = f"--python {python_version}" if python_version else ""
+                cmd = f"uvx {python_flag} {deps_args} python {script_file}"
+            else:
+                # Just use uv run for simple execution
+                python_flag = f"--python {python_version}" if python_version else ""
+                cmd = f"uv run {python_flag} python {script_file}"
+
+            # Execute
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=tmpdir
+            )
+
+            success = result.returncode == 0
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+
+            # Format as JSON string
+            import json
+            return json.dumps({
+                "success": success,
+                "output": output,
+                "error": error
+            })
+
+    def _execute_javascript(code: str, dependencies: list[str]) -> str:
+        """Execute JavaScript code using node."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            script_file = tmp_path / "script.js"
+
+            # If dependencies, create package.json and install
+            if dependencies:
+                package_json = {
+                    "type": "module",
+                    "dependencies": {dep: "latest" for dep in dependencies}
+                }
+                import json
+                (tmp_path / "package.json").write_text(json.dumps(package_json, indent=2))
+
+                # Install dependencies
+                install_result = subprocess.run(
+                    "npm install",
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    cwd=tmpdir
+                )
+
+                if install_result.returncode != 0:
+                    return json.dumps({
+                        "success": False,
+                        "output": "",
+                        "error": f"Failed to install dependencies: {install_result.stderr}"
+                    })
+
+            script_file.write_text(code)
+
+            # Execute
+            result = subprocess.run(
+                f"node {script_file}",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=tmpdir
+            )
+
+            success = result.returncode == 0
+            output = result.stdout.strip()
+            error = result.stderr.strip()
+
+            import json
+            return json.dumps({
+                "success": success,
+                "output": output,
+                "error": error
+            })
+
+    def _execute_bash(code: str) -> str:
+        """Execute bash code directly."""
+        result = subprocess.run(
+            code,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        success = result.returncode == 0
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+
+        import json
+        return json.dumps({
+            "success": success,
+            "output": output,
+            "error": error
+        })
+
+    return execute_code_snippet
 
 
 class DocsReviewerAgent:
-    """Simple agent for reviewing documentation code snippets."""
+    """Agent that reviews docs by calling execute_code_snippet tool in parallel."""
 
     def __init__(self):
-        """Initialize the docs reviewer agent."""
-        # Get API key
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment")
-
-        # Initialize LLM - simple defaults
-        self.llm = ChatAnthropic(
-            model="claude-sonnet-4-5-20250929",
-            temperature=0.0,
-            api_key=api_key,
-        )
-
-        # Create tools and agent
-        self.tools = self._create_tools()
-        self.agent = create_deep_agent(
-            model=self.llm,
-            tools=self.tools,
-        )
-
-    def _create_tools(self) -> list:
-        """Create custom tools for the agent."""
-        tools = []
-
-        @tool
-        def execute_python_snippet(code: str) -> dict[str, Any]:
-            """
-            Execute a Python code snippet in a safe sandbox environment.
-
-            Args:
-                code: The Python code to execute
-
-            Returns:
-                Dictionary with execution results including stdout, stderr, and success status
-            """
-            import sys
-            from io import StringIO
-            import traceback
-
-            # Capture stdout and stderr
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            stdout_capture = StringIO()
-            stderr_capture = StringIO()
-
-            sys.stdout = stdout_capture
-            sys.stderr = stderr_capture
-
-            result = {"success": False, "stdout": "", "stderr": "", "error": None}
-
-            try:
-                # Execute the code
-                exec_globals: dict[str, Any] = {}
-                exec(code, exec_globals)
-                result["success"] = True
-            except Exception as e:
-                result["error"] = str(e)
-                result["stderr"] = traceback.format_exc()
-            finally:
-                # Restore stdout/stderr
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-
-                result["stdout"] = stdout_capture.getvalue()
-                if not result["stderr"]:
-                    result["stderr"] = stderr_capture.getvalue()
-
-            return result
-
-        @tool
-        def validate_code_syntax(code: str, language: str) -> dict[str, Any]:
-            """
-            Validate the syntax of a code snippet without executing it.
-
-            Args:
-                code: The code to validate
-                language: The programming language (python, javascript, etc.)
-
-            Returns:
-                Dictionary with validation results
-            """
-            result = {"valid": False, "errors": []}
-
-            if language.lower() in ("python", "py"):
-                import ast
-
-                try:
-                    ast.parse(code)
-                    result["valid"] = True
-                except SyntaxError as e:
-                    result["errors"].append(f"Line {e.lineno}: {e.msg}")
-            elif language.lower() in ("javascript", "js", "typescript", "ts"):
-                # For JS/TS, we would need an external validator
-                # For now, just do basic checks
-                result["valid"] = True
-                result["errors"].append("JavaScript/TypeScript validation not yet implemented")
-            else:
-                result["valid"] = True
-                result["errors"].append(f"Syntax validation not supported for {language}")
-
-            return result
-
-        @tool
-        def search_langchain_docs(query: str) -> str:
-            """
-            Search the LangChain documentation for relevant information.
-
-            Args:
-                query: The search query
-
-            Returns:
-                Relevant documentation content
-            """
-            # This will be implemented via MCP server
-            # For now, return a placeholder
-            return f"Searching LangChain docs for: {query}\n(MCP server integration pending)"
-
-        tools.append(execute_python_snippet)
-        tools.append(validate_code_syntax)
-        tools.append(search_langchain_docs)
-
-        return tools
+        """Initialize the agent - no longer needed, kept for compatibility."""
+        pass
 
     def review_snippets(
         self,
         markdown_file: Path,
-        snippets: list[CodeSnippet],
-        progress_callback: Optional[Callable[[], None]] = None,
+        snippets: list['CodeSnippet'],
     ) -> list[dict[str, Any]]:
         """
-        Review and execute code snippets from a markdown file.
+        Review snippets by returning them for the CLI agent to process.
+
+        The CLI agent will call execute_code_snippet tool for each snippet,
+        and LangGraph will handle parallel execution automatically.
 
         Args:
-            markdown_file: Path to the markdown file
-            snippets: List of code snippets to review
-            progress_callback: Optional callback to call after each snippet
+            markdown_file: Path to markdown file
+            snippets: List of code snippets
 
         Returns:
-            List of results for each snippet
+            List of snippet metadata (execution happens via tool calls)
         """
-        # Filter to only executable snippets
-        executable_snippets = filter_executable_snippets(snippets)
+        from docs_reviewer.markdown_parser import filter_executable_snippets
 
-        results = []
+        # Just return executable snippets - the main agent will execute them
+        executable = filter_executable_snippets(snippets)
 
-        for i, snippet in enumerate(executable_snippets, 1):
-            # Create a prompt for the agent
-            prompt = f"""Review and validate the following code snippet from {markdown_file}:
-
-Language: {snippet['language']}
-Lines: {snippet['start_line']}-{snippet['end_line']}
-
-Code:
-```{snippet['language']}
-{snippet['code']}
-```
-
-Tasks:
-1. Validate the syntax of the code
-2. If it's Python code, try to execute it safely
-3. If execution fails, analyze the error and suggest fixes
-4. If the code requires imports or setup, note what's missing
-5. Check if this appears to be LangChain/LangGraph code and search docs if needed
-
-Provide a detailed analysis and any corrections needed."""
-
-            # Invoke the agent
-            response = self.agent.invoke({"messages": [{"role": "user", "content": prompt}]})
-
-            # Extract the agent's response
-            last_message = response["messages"][-1]
-            analysis = last_message.content if hasattr(last_message, "content") else str(last_message)
-
-            result = {
-                "snippet_index": i - 1,
-                "success": "successfully" in analysis.lower() or "valid" in analysis.lower(),
-                "analysis": analysis,
-                "original_code": snippet["code"],
-                "corrected_code": snippet["code"],  # Will be updated if corrections are found
-                "language": snippet["language"],
-                "start_line": snippet["start_line"],
-                "end_line": snippet["end_line"],
+        return [
+            {
+                "snippet_index": i,
+                "code": s["code"],
+                "language": s["language"],
+                "start_line": s["start_line"],
+                "end_line": s["end_line"],
             }
-
-            results.append(result)
-
-            if progress_callback:
-                progress_callback()
-
-        return results
+            for i, s in enumerate(executable)
+        ]

@@ -11,7 +11,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from deepagents import create_deep_agent
 from docs_reviewer.markdown_parser import extract_code_snippets, filter_executable_snippets, categorize_snippets
 from docs_reviewer.markdown_writer import write_corrected_markdown, write_review_report
-from docs_reviewer.agent import DocsReviewerAgent
+from docs_reviewer.agent import create_code_execution_tool
 
 
 class DocsReviewerCLIAgent:
@@ -19,8 +19,10 @@ class DocsReviewerCLIAgent:
 
     def __init__(self):
         """Initialize the CLI agent."""
-        self.conversation_history: list = []
+        import uuid
+
         self.current_working_directory = Path.cwd()
+        self.thread_id = f"docs-reviewer-{uuid.uuid4().hex[:8]}"  # Unique thread per session
 
         # Get API key
         api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -36,10 +38,19 @@ class DocsReviewerCLIAgent:
 
         # Create tools and agent
         self.tools = self._create_cli_tools()
+
+        # Add code execution tool
+        self.execute_code_snippet = create_code_execution_tool()
+        all_tools = self.tools + [self.execute_code_snippet]
+
+        # Create agent with checkpointer for conversation memory
+        from langgraph.checkpoint.memory import MemorySaver
+
         self.agent = create_deep_agent(
             model=self.llm,
-            tools=self.tools,
+            tools=all_tools,
             system_prompt=self._get_system_prompt(),
+            checkpointer=MemorySaver(),  # In-memory checkpointer for conversation state
         )
 
     def _get_system_prompt(self) -> str:
@@ -48,12 +59,40 @@ class DocsReviewerCLIAgent:
 
 Working directory: {self.current_working_directory}
 
-When reviewing files:
-1. Use list_snippets to show what code was found
-2. Use review_markdown_file to validate and generate corrections
-3. Report results concisely
+## Workflow for reviewing files:
 
-Be direct and concise. Use relative paths from the working directory.
+1. Use `list_snippets` to show what code snippets exist in a file
+2. Use `review_markdown_file` to start the review process - this extracts executable snippets
+3. Call `execute_code_snippet` for EACH snippet IN PARALLEL to validate them
+   - Pass: code, language, dependencies (list), python_version (if applicable)
+   - Example: execute_code_snippet(code="import pandas as pd...", language="python", dependencies=["pandas"])
+   - You can make multiple execute_code_snippet calls at the same time
+   - This is the key to fast reviews - parallel execution!
+4. Use `finalize_review` to generate the corrected markdown and report files
+
+## execute_code_snippet Tool Details:
+
+For **Python** snippets:
+- If code imports packages (pandas, numpy, requests, etc.), include them in dependencies
+- Example: dependencies=["pandas", "numpy", "matplotlib"]
+- Optionally specify python_version="3.11" if needed
+- Uses uv/uvx for isolated execution with dependency installation
+
+For **JavaScript** snippets:
+- If code requires npm packages, include them in dependencies
+- Example: dependencies=["axios", "lodash"]
+- Uses node with automatic npm install
+
+For **Bash** snippets:
+- No dependencies needed, executes directly
+
+## Important Notes:
+
+- LangGraph will automatically execute parallel tool calls concurrently
+- Always call execute_code_snippet IN PARALLEL for all snippets (not one at a time)
+- Analyze code to detect required dependencies from import statements
+- Be direct and concise in your responses
+- Use relative paths from the working directory
 """
 
     def _create_cli_tools(self) -> list:
@@ -102,18 +141,20 @@ Be direct and concise. Use relative paths from the working directory.
                 return {"error": str(e)}
 
         @tool
-        def review_markdown_file(
-            markdown_file: str, output_file: Optional[str] = None
-        ) -> dict[str, Any]:
+        def review_markdown_file(markdown_file: str, output_file: Optional[str] = None) -> str:
             """
-            Review a markdown file and validate all code snippets, generating corrected output.
+            Review a markdown file and return the list of code snippets to execute.
+
+            IMPORTANT: After calling this tool, you MUST call execute_code_snippet for EACH
+            snippet returned. You can call execute_code_snippet multiple times IN PARALLEL
+            to speed up the review process.
 
             Args:
                 markdown_file: Path to the markdown file to review
                 output_file: Optional path for the corrected markdown (default: <input>_corrected.md)
 
             Returns:
-                Dictionary with review results and output file path
+                Instructions on what snippets to execute next
             """
             try:
                 file_path = Path(markdown_file)
@@ -121,24 +162,111 @@ Be direct and concise. Use relative paths from the working directory.
                     file_path = self.current_working_directory / file_path
 
                 if not file_path.exists():
-                    return {"error": f"File not found: {file_path}"}
+                    return f"Error: File not found: {file_path}"
+
+                # Extract snippets
+                snippets = extract_code_snippets(file_path)
+                if not snippets:
+                    return "Error: No code snippets found in file"
+
+                # Get executable snippets
+                executable = filter_executable_snippets(snippets)
+
+                if not executable:
+                    return "No executable code snippets found in this file."
+
+                # Store the context for later use
+                self._review_context = {
+                    "file_path": file_path,
+                    "output_file": output_file,
+                    "snippets": snippets,
+                    "executable": executable,
+                }
+
+                # Return detailed snippet info
+                snippet_details = []
+                for i, s in enumerate(executable):
+                    code_preview = s['code'][:100] + "..." if len(s['code']) > 100 else s['code']
+                    snippet_details.append(
+                        f"  {i+1}. {s['language']} (lines {s['start_line']}-{s['end_line']})\n"
+                        f"     Code: {repr(code_preview)}"
+                    )
+
+                snippet_list = "\n".join(snippet_details)
+
+                return f"""Found {len(executable)} executable code snippets in {file_path.name}:
+
+{snippet_list}
+
+NEXT STEP: Call execute_code_snippet for each snippet IN PARALLEL.
+Analyze each snippet for import statements to detect dependencies.
+
+For each snippet:
+- Look for imports (Python: import/from, JS: require/import)
+- Call execute_code_snippet with: code, language, dependencies (if any)
+- Make ALL calls in parallel (not one at a time)
+
+After all snippets execute, call finalize_review with the results."""
+            except Exception as e:
+                return f"Error: {str(e)}"
+
+        @tool
+        def finalize_review(execution_results: list[str]) -> dict[str, Any]:
+            """
+            Finalize the review by generating corrected markdown and report files.
+
+            Call this AFTER you have executed all code snippets using execute_code_snippet.
+
+            Args:
+                execution_results: List of JSON strings from execute_code_snippet calls
+                                 Each should be: {"success": bool, "output": str, "error": str}
+
+            Returns:
+                Dictionary with file paths and summary statistics
+            """
+            import json
+
+            try:
+                if not hasattr(self, '_review_context'):
+                    return {"error": "No active review context. Call review_markdown_file first."}
+
+                context = self._review_context
+                file_path = context["file_path"]
+                snippets = context["snippets"]
+                executable = context["executable"]
 
                 # Set output path
-                if output_file:
-                    output_path = Path(output_file)
+                if context.get("output_file"):
+                    output_path = Path(context["output_file"])
                     if not output_path.is_absolute():
                         output_path = self.current_working_directory / output_path
                 else:
                     output_path = file_path.parent / f"{file_path.stem}_corrected.md"
 
-                # Extract snippets
-                snippets = extract_code_snippets(file_path)
-                if not snippets:
-                    return {"error": "No code snippets found in file"}
+                # Parse execution results
+                results = []
+                for i, (snippet, exec_result_str) in enumerate(zip(executable, execution_results)):
+                    try:
+                        exec_result = json.loads(exec_result_str) if isinstance(exec_result_str, str) else exec_result_str
+                    except json.JSONDecodeError:
+                        exec_result = {"success": False, "output": "", "error": "Invalid result format"}
 
-                # Review with the docs reviewer agent
-                reviewer = DocsReviewerAgent()
-                results = reviewer.review_snippets(file_path, snippets)
+                    # Build analysis from execution result
+                    if exec_result.get("success"):
+                        analysis = f"✓ Success\nOutput: {exec_result.get('output', '')}"
+                    else:
+                        analysis = f"✗ Failed\nError: {exec_result.get('error', '')}"
+
+                    results.append({
+                        "snippet_index": i,
+                        "success": exec_result.get("success", False),
+                        "analysis": analysis,
+                        "original_code": snippet["code"],
+                        "corrected_code": snippet["code"],
+                        "language": snippet["language"],
+                        "start_line": snippet["start_line"],
+                        "end_line": snippet["end_line"],
+                    })
 
                 # Write corrected markdown
                 write_corrected_markdown(file_path, output_path, snippets, results)
@@ -151,6 +279,9 @@ Be direct and concise. Use relative paths from the working directory.
                 total = len(results)
                 successful = sum(1 for r in results if r["success"])
                 failed = total - successful
+
+                # Clear context
+                del self._review_context
 
                 return {
                     "success": True,
@@ -235,6 +366,7 @@ Be direct and concise. Use relative paths from the working directory.
 
         tools.append(list_snippets)
         tools.append(review_markdown_file)
+        tools.append(finalize_review)
         tools.append(change_directory)
         tools.append(get_working_directory)
         tools.append(find_markdown_files)
@@ -255,9 +387,6 @@ Be direct and concise. Use relative paths from the working directory.
         import json
         from rich.syntax import Syntax
 
-        # Add to conversation history
-        self.conversation_history.append(HumanMessage(content=message))
-
         # Stream the agent's response
         try:
             final_response = ""
@@ -266,8 +395,10 @@ Be direct and concise. Use relative paths from the working directory.
             last_ai_message = None
 
             # Use only "updates" stream mode for smoother, less jumpy output
+            # Pass only the new message - LangGraph will handle conversation history via checkpointer
             for stream_item in self.agent.stream(
-                {"messages": self.conversation_history},
+                {"messages": [HumanMessage(content=message)]},
+                config={"configurable": {"thread_id": self.thread_id}},
                 stream_mode="updates"
             ):
                 # stream_item is a dict mapping node_name -> node_output
@@ -341,14 +472,57 @@ Be direct and concise. Use relative paths from the working directory.
 
                             # Handle tool response messages
                             elif hasattr(msg, 'type') and msg.type == 'tool':
-                                tool_name = getattr(msg, 'name', 'unknown')
+                                # Get tool name from tool_call_id by looking up in recent AI message
+                                tool_name = 'unknown'
+                                if last_ai_message and hasattr(last_ai_message, 'tool_calls'):
+                                    tool_call_id = getattr(msg, 'tool_call_id', None)
+                                    for tc in last_ai_message.tool_calls:
+                                        if tc.get('id') == tool_call_id:
+                                            tool_name = tc.get('name', 'unknown')
+                                            break
+
                                 tool_content = getattr(msg, 'content', '')
 
                                 # Parse and display tool results
                                 try:
                                     result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
 
-                                    # Check for errors first
+                                    # Special formatting for execute_code_snippet (handle first, before generic error check)
+                                    if tool_name == "execute_code_snippet":
+                                        # Result is a JSON string
+                                        try:
+                                            exec_result = json.loads(result) if isinstance(result, str) else result
+
+                                            # Get the language from tool args
+                                            language = "unknown"
+                                            if last_ai_message and hasattr(last_ai_message, 'tool_calls'):
+                                                tool_call_id = getattr(msg, 'tool_call_id', None)
+                                                for tc in last_ai_message.tool_calls:
+                                                    if tc.get('id') == tool_call_id:
+                                                        language = tc.get('args', {}).get('language', 'unknown')
+                                                        break
+
+                                            if exec_result.get("success"):
+                                                output = exec_result.get("output", "")
+                                                preview = output[:50] + "..." if len(output) > 50 else output
+                                                console.print(f"[green]  ✓ {language}[/green]", end="")
+                                                if preview:
+                                                    console.print(f" → {repr(preview)}")
+                                                else:
+                                                    console.print()
+                                            else:
+                                                error = exec_result.get("error", "Unknown error")
+                                                # Show first line of error
+                                                error_lines = error.split('\n')
+                                                error_preview = error_lines[-1] if error_lines else error
+                                                if len(error_preview) > 60:
+                                                    error_preview = error_preview[:60] + "..."
+                                                console.print(f"[red]  ✗ {language}[/red] → {error_preview}")
+                                        except (json.JSONDecodeError, TypeError):
+                                            console.print(f"[dim]  ✓[/dim]")
+                                        continue
+
+                                    # Check for errors in other tools
                                     if isinstance(result, dict) and "error" in result:
                                         console.print(f"[red]  ✗ Error: {result['error']}[/red]\n")
                                         continue
@@ -438,18 +612,15 @@ Be direct and concise. Use relative paths from the working directory.
             if final_response and not final_response.endswith('\n'):
                 console.print()
 
-            # Add to conversation history
-            if final_response:
-                self.conversation_history.append(AIMessage(content=final_response))
-
+            # Conversation history is automatically managed by LangGraph checkpointer
             return final_response
 
         except Exception as e:
             error_message = f"Error: {str(e)}"
             console.print(f"\n[red]{error_message}[/red]")
-            self.conversation_history.append(AIMessage(content=error_message))
             return error_message
 
     def reset_conversation(self) -> None:
-        """Reset the conversation history."""
-        self.conversation_history = []
+        """Reset the conversation history by creating a new thread."""
+        import uuid
+        self.thread_id = f"docs-reviewer-{uuid.uuid4().hex[:8]}"
