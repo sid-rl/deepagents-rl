@@ -111,6 +111,53 @@ class StoreBackend:
             "created_at": file_data["created_at"],
             "modified_at": file_data["modified_at"],
         }
+
+    def _search_store_paginated(
+        self,
+        store: BaseStore,
+        namespace: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        page_size: int = 100,
+    ) -> list[Item]:
+        """Search store with automatic pagination to retrieve all results.
+
+        Args:
+            store: The store to search.
+            namespace: Hierarchical path prefix to search within.
+            query: Optional query for natural language search.
+            filter: Key-value pairs to filter results.
+            page_size: Number of items to fetch per page (default: 100).
+
+        Returns:
+            List of all items matching the search criteria.
+
+        Example:
+            ```python
+            store = _get_store(runtime)
+            namespace = _get_namespace()
+            all_items = _search_store_paginated(store, namespace)
+            ```
+        """
+        all_items: list[Item] = []
+        offset = 0
+        while True:
+            page_items = store.search(
+                namespace,
+                query=query,
+                filter=filter,
+                limit=page_size,
+                offset=offset,
+            )
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < page_size:
+                break
+            offset += page_size
+
+        return all_items
     
     def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """List files from store.
@@ -126,7 +173,7 @@ class StoreBackend:
         namespace = self._get_namespace()
         
         # Search store with optional prefix filter
-        items = store.search(namespace, filter={"prefix": prefix} if prefix else None)
+        items = self._search_store_paginated(store, namespace, filter={"prefix": prefix} if prefix else None)
         
         return [item.key for item in items]
     
@@ -280,7 +327,7 @@ class StoreBackend:
         store = self._get_store(runtime)
         namespace = self._get_namespace()
         
-        items = store.search(namespace)
+        items = self._search_store_paginated(store, namespace)
         
         files = {}
         for item in items:
@@ -308,7 +355,7 @@ class StoreBackend:
         store = self._get_store(runtime)
         namespace = self._get_namespace()
         
-        items = store.search(namespace)
+        items = self._search_store_paginated(store, namespace)
         
         files = {}
         for item in items:

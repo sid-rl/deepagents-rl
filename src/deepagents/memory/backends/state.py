@@ -1,7 +1,7 @@
 """StateBackend: Store files in LangGraph agent state (ephemeral)."""
 
 import re
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
@@ -200,7 +200,7 @@ class StateBackend:
         pattern: str,
         path: str = "/",
         include: Optional[str] = None,
-        output_mode: str = "files_with_matches",
+        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
         runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files.

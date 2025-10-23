@@ -74,6 +74,7 @@ def create_file_data(content: str, created_at: str | None = None) -> dict[str, A
         FileData dict with content and timestamps
     """
     lines = content.split("\n") if isinstance(content, str) else content
+    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
     now = datetime.now(UTC).isoformat()
     
     return {
@@ -94,6 +95,7 @@ def update_file_data(file_data: dict[str, Any], content: str) -> dict[str, Any]:
         Updated FileData dict
     """
     lines = content.split("\n") if isinstance(content, str) else content
+    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
     now = datetime.now(UTC).isoformat()
     
     return {

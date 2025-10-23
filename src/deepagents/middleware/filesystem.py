@@ -26,9 +26,8 @@ from langgraph.types import Command
 from typing_extensions import TypedDict
 
 from deepagents.memory.protocol import MemoryBackend
-from deepagents.memory.backends import StateBackend, CompositeBackend, StoreBackend
+from deepagents.memory.backends import StateBackend
 
-MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
@@ -197,6 +196,8 @@ def _create_file_data(
         ```
     """
     lines = content.split("\n") if isinstance(content, str) else content
+    # Split any lines exceeding MAX_LINE_LENGTH into chunks
+    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
     now = datetime.now(UTC).isoformat()
 
     return {
@@ -295,11 +296,6 @@ All file paths must start with a /.
 - edit_file: edit a file in the filesystem
 - glob: find files matching a pattern (e.g., "**/*.py")
 - grep: search for text within files"""
-FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
-
-You also have access to a longterm filesystem in which you can store files that you want to keep around for longer than the current conversation.
-In order to interact with the longterm filesystem, you can use those same tools, but filenames must be prefixed with the {MEMORIES_PREFIX} path.
-Remember, to interact with the longterm filesystem, you must prefix the filename with the {MEMORIES_PREFIX} path."""
 
 
 def _ls_tool_generator(
@@ -427,8 +423,8 @@ def _glob_tool_generator(
     tool_description = custom_description or GLOB_TOOL_DESCRIPTION
 
     @tool(description=tool_description)
-    def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState]) -> list[str]:
-        return backend.glob(pattern, runtime=runtime)
+    def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState], path: str = "/") -> list[str]:
+        return backend.glob(pattern, path=path, runtime=runtime)
 
     return glob
 
@@ -507,29 +503,32 @@ class FilesystemMiddleware(AgentMiddleware):
     """Middleware for providing filesystem tools to an agent.
 
     This middleware adds six filesystem tools to the agent: ls, read_file, write_file,
-    edit_file, glob, and grep. Files can be stored in two locations:
-    - Short-term: In the agent's state (ephemeral, lasts only for the conversation)
-    - Long-term: In a persistent store (persists across conversations when enabled)
+    edit_file, glob, and grep. Files can be stored using any backend that implements
+    the MemoryBackend protocol.
 
     Args:
-        backend: Optional backend for file storage. If not provided, defaults to StateBackend.
-        long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend
-            with StateBackend as default and long_term_backend for /memories/ prefix.
+        memory_backend: Backend for file storage. If not provided, defaults to StateBackend
+            (ephemeral storage in agent state). For persistent storage or hybrid setups,
+            use CompositeBackend with custom routes.
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
         tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
 
     Example:
         ```python
-        from langchain.agents.middleware.filesystem import FilesystemMiddleware
+        from deepagents.middleware.filesystem import FilesystemMiddleware
+        from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
         from langchain.agents import create_agent
 
-        # Short-term memory only
+        # Ephemeral storage only (default)
         agent = create_agent(middleware=[FilesystemMiddleware()])
 
-        # With long-term memory
-        from deepagents.memory.backends import StoreBackend
-        agent = create_agent(middleware=[FilesystemMiddleware(long_term_backend=StoreBackend())])
+        # With hybrid storage (ephemeral + persistent /memories/)
+        backend = CompositeBackend(
+            default=StateBackend(),
+            routes={"/memories/": StoreBackend()}
+        )
+        agent = create_agent(middleware=[FilesystemMiddleware(memory_backend=backend)])
         ```
     """
 
@@ -538,8 +537,7 @@ class FilesystemMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        backend: MemoryBackend | None = None,
-        long_term_memory: MemoryBackend | None | bool = None,
+        memory_backend: MemoryBackend | None = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
@@ -547,40 +545,18 @@ class FilesystemMiddleware(AgentMiddleware):
         """Initialize the filesystem middleware.
 
         Args:
-            backend: Optional backend for file storage. If provided, uses it directly.
-            long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend.
+            memory_backend: Backend for file storage. Defaults to StateBackend if not provided.
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
         """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
-        # Handle shortcut for default longterm memory
-        if long_term_memory is True:
-            long_term_backend = StoreBackend()
-        elif long_term_memory is False:
-            long_term_backend = None
-        else:
-            long_term_backend = long_term_memory
-        if backend is not None and long_term_backend is not None:
-            self.backend = CompositeBackend(
-                default=backend,
-                routes={MEMORIES_PREFIX: long_term_backend}
-            )
-        elif backend is not None:
-            self.backend = backend
-        elif long_term_backend is not None:
-            self.backend = CompositeBackend(
-                default=StateBackend(),
-                routes={MEMORIES_PREFIX: long_term_backend}
-            )
-        else:
-            self.backend = StateBackend()
-        
-        self.system_prompt = FILESYSTEM_SYSTEM_PROMPT
-        if long_term_backend is not None:
-            self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
-        if system_prompt is not None:
-            self.system_prompt = system_prompt
+
+        # Use provided backend or default to StateBackend
+        self.backend = memory_backend if memory_backend is not None else StateBackend()
+
+        # Set system prompt (allow full override)
+        self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT
 
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
 
