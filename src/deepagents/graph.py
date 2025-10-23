@@ -138,7 +138,7 @@ def create_deep_agent(
     if interrupt_on is not None:
         deepagent_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
     if middleware is not None:
-        deepagent_middleware.extend(middleware)
+        deepagent_middleware = [*middleware, *deepagent_middleware]
 
     return create_agent(
         model,
