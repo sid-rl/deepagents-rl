@@ -6,12 +6,9 @@ and creating executable scripts to test that the documentation is correct.
 """
 
 import argparse
-import os
 from pathlib import Path
 
 from deepagents import create_deep_agent
-from deepagents.middleware import PlanningMiddleware
-
 
 # System prompt for the documentation verifier agent
 DOC_VERIFIER_PROMPT = """You are an expert documentation verification agent. Your job is to verify that technical documentation works correctly by extracting and testing code snippets.
@@ -46,21 +43,16 @@ You have access to standard file operations (read, write, edit) and bash command
 """
 
 
+
 def main():
     """Main entry point for the documentation verifier."""
-    parser = argparse.ArgumentParser(
-        description="Verify technical documentation by extracting and testing code snippets"
-    )
-    parser.add_argument(
-        "markdown_file",
-        type=str,
-        help="Path to the markdown documentation file to verify"
-    )
+    parser = argparse.ArgumentParser(description="Verify technical documentation by extracting and testing code snippets")
+    parser.add_argument("markdown_file", type=str, help="Path to the markdown documentation file to verify")
     parser.add_argument(
         "--output-dir",
         type=str,
         default="./verification_output",
-        help="Directory to store verification scripts and results (default: ./verification_output)"
+        help="Directory to store verification scripts and results (default: ./verification_output)",
     )
 
     args = parser.parse_args()
@@ -71,7 +63,7 @@ def main():
         print(f"Error: File not found: {args.markdown_file}")
         return 1
 
-    if not markdown_path.suffix.lower() in ['.md', '.markdown']:
+    if not markdown_path.suffix.lower() in [".md", ".markdown"]:
         print(f"Warning: File does not have .md or .markdown extension: {args.markdown_file}")
 
     # Create output directory
@@ -79,7 +71,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Read the markdown content
-    with open(markdown_path, 'r', encoding='utf-8') as f:
+    with open(markdown_path, "r", encoding="utf-8") as f:
         markdown_content = f.read()
 
     print(f"Verifying documentation: {markdown_path}")
@@ -89,7 +81,7 @@ def main():
     # Create the agent with planning middleware
     agent = create_deep_agent(
         system_prompt=DOC_VERIFIER_PROMPT,
-        middleware=[PlanningMiddleware()],
+        interrupt_on={"shell": True},
     )
 
     # Prepare the initial message with the documentation
@@ -107,23 +99,21 @@ Documentation content:
 Please extract all Python code snippets, create a verification script, and test that the documentation is correct.
 """
 
-    # Run the agent
+    # Run the agent with streaming
     print("Starting documentation verification...")
     print()
 
-    result = agent.invoke({"messages": [{"role": "user", "content": initial_message}]})
+    # Stream the agent's execution to see intermediate outputs
+    for chunk in agent.stream({"messages": [{"role": "user", "content": initial_message}]}):
+        # Print each chunk as it arrives for real-time feedback
+        print(chunk)
+        print()  # Add spacing between chunks
 
-    # Print the final result
+    # Print completion message
     print()
     print("=" * 80)
     print("VERIFICATION COMPLETE")
     print("=" * 80)
-    print()
-
-    if result and "messages" in result and len(result["messages"]) > 0:
-        final_message = result["messages"][-1]
-        if "content" in final_message:
-            print(final_message["content"])
 
     return 0
 
