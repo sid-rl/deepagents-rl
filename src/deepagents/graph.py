@@ -49,7 +49,7 @@ def create_deep_agent(
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
     memory_backend: MemoryBackend | None = None,
-    long_term_backend: MemoryBackend | None = None,
+    use_longterm_memory: MemoryBackend | None | bool = None,
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
     debug: bool = False,
     name: str | None = None,
@@ -101,8 +101,10 @@ def create_deep_agent(
     filesystem_kwargs = {}
     if memory_backend is not None:
         filesystem_kwargs["backend"] = memory_backend
-    if long_term_backend is not None:
-        filesystem_kwargs["long_term_backend"] = long_term_backend
+    if use_longterm_memory is not None:
+        if use_longterm_memory is True and store is None:
+            raise ValueError("If specifying `use_longterm_memory=True`, you must pass a store")
+        filesystem_kwargs["long_term_memory"] = use_longterm_memory
 
     deepagent_middleware = [
         TodoListMiddleware(),

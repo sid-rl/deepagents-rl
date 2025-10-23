@@ -22,12 +22,11 @@ from langchain.tools import ToolRuntime
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, tool
-from langgraph.runtime import Runtime
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
 from deepagents.memory.protocol import MemoryBackend
-from deepagents.memory.backends import StateBackend, CompositeBackend
+from deepagents.memory.backends import StateBackend, CompositeBackend, StoreBackend
 
 MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -221,7 +220,6 @@ Usage:
 - You can optionally provide a path parameter to list files in a specific directory.
 - This is very useful for exploring the file system and finding the right file to read or edit.
 - You should almost ALWAYS use this tool before using the Read or Edit tools."""
-LIST_FILES_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- Files from the longterm filesystem will be prefixed with the {MEMORIES_PREFIX} path."
 
 READ_FILE_TOOL_DESCRIPTION = """Reads a file from the filesystem. You can access any file directly by using this tool.
 Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
@@ -235,7 +233,6 @@ Usage:
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.
 - If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.
 - You should ALWAYS make sure a file has been read before editing it."""
-READ_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- file_paths prefixed with the {MEMORIES_PREFIX} path will be read from the longterm filesystem."
 
 EDIT_FILE_TOOL_DESCRIPTION = """Performs exact string replacements in files.
 
@@ -246,9 +243,7 @@ Usage:
 - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
 - The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
 - Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."""
-EDIT_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
-    f"\n- You can edit files in the longterm filesystem by prefixing the filename with the {MEMORIES_PREFIX} path."
-)
+
 
 WRITE_FILE_TOOL_DESCRIPTION = """Writes to a new file in the filesystem.
 
@@ -256,11 +251,8 @@ Usage:
 - The file_path parameter must be an absolute path, not a relative path
 - The content parameter must be a string
 - The write_file tool will create the a new file.
-- Prefer to edit existing files over creating new ones when possible.
-- file_paths prefixed with the /memories/ path will be written to the longterm filesystem."""
-WRITE_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = (
-    f"\n- file_paths prefixed with the {MEMORIES_PREFIX} path will be written to the longterm filesystem."
-)
+- Prefer to edit existing files over creating new ones when possible."""
+
 
 GLOB_TOOL_DESCRIPTION = """Find files matching a glob pattern.
 
@@ -274,7 +266,6 @@ Examples:
 - `**/*.py` - Find all Python files
 - `*.txt` - Find all text files in root
 - `/subdir/**/*.md` - Find all markdown files under /subdir"""
-GLOB_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- Patterns can match files in the longterm filesystem (files prefixed with {MEMORIES_PREFIX})"
 
 GREP_TOOL_DESCRIPTION = """Search for a pattern in files.
 
@@ -292,7 +283,6 @@ Examples:
 - Search all files: `grep(pattern="TODO")`
 - Search Python files only: `grep(pattern="import", include="*.py")`
 - Show matching lines: `grep(pattern="error", output_mode="content")`"""
-GREP_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT = f"\n- Can search files in the longterm filesystem (files prefixed with {MEMORIES_PREFIX})"
 
 FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`
 
@@ -523,7 +513,7 @@ class FilesystemMiddleware(AgentMiddleware):
 
     Args:
         backend: Optional backend for file storage. If not provided, defaults to StateBackend.
-        long_term_backend: Optional backend for /memories/ files. If provided, creates CompositeBackend
+        long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend
             with StateBackend as default and long_term_backend for /memories/ prefix.
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
@@ -549,7 +539,7 @@ class FilesystemMiddleware(AgentMiddleware):
         self,
         *,
         backend: MemoryBackend | None = None,
-        long_term_backend: MemoryBackend | None = None,
+        long_term_memory: MemoryBackend | None | bool = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
@@ -558,12 +548,19 @@ class FilesystemMiddleware(AgentMiddleware):
 
         Args:
             backend: Optional backend for file storage. If provided, uses it directly.
-            long_term_backend: Optional backend for /memories/ files. If provided, creates CompositeBackend.
+            long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend.
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
         """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
+        # Handle shortcut for default longterm memory
+        if long_term_memory is True:
+            long_term_backend = StoreBackend()
+        elif long_term_memory is False:
+            long_term_backend = None
+        else:
+            long_term_backend = long_term_memory
         if backend is not None and long_term_backend is not None:
             self.backend = CompositeBackend(
                 default=backend,

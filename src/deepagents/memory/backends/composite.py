@@ -100,7 +100,7 @@ class CompositeBackend:
             
             # Check if prefix matches a specific route
             for route_prefix, backend in self.sorted_routes:
-                if prefix.startswith(route_prefix):
+                if prefix.startswith(route_prefix.rstrip("/")):
                     # Query only the matching routed backend
                     search_prefix = prefix[len(route_prefix) - 1:]
                     keys = backend.ls(search_prefix if search_prefix != "/" else None, runtime=runtime)

@@ -10,7 +10,6 @@ from langgraph.store.memory import InMemoryStore
 from deepagents.graph import create_deep_agent
 from deepagents.middleware.filesystem import (
     WRITE_FILE_TOOL_DESCRIPTION,
-    WRITE_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT,
     FileData,
     FilesystemMiddleware,
 )
@@ -96,7 +95,7 @@ class TestFilesystem:
         assert "read_file" in tools
         assert tools["read_file"].description == "Bulbasaur"
         assert "write_file" in tools
-        assert tools["write_file"].description == WRITE_FILE_TOOL_DESCRIPTION + WRITE_FILE_TOOL_DESCRIPTION_LONGTERM_SUPPLEMENT
+        assert tools["write_file"].description == WRITE_FILE_TOOL_DESCRIPTION
         assert "edit_file" in tools
         assert tools["edit_file"].description == "Squirtle"
 
@@ -597,7 +596,7 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use glob_search to find all Python files")],
+                "messages": [HumanMessage(content="Use glob to find all Python files")],
                 "files": {
                     "/test.py": FileData(
                         content=["import os"],
@@ -619,7 +618,7 @@ class TestFilesystem:
             config=config,
         )
         messages = response["messages"]
-        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob_search")
+        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob")
         assert "/test.py" in glob_message.content
         assert "/main.py" in glob_message.content
         assert "/readme.txt" not in glob_message.content
@@ -667,13 +666,13 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use glob_search to find all Python files in longterm memory")],
+                "messages": [HumanMessage(content="Use glob to find all Python files in longterm memory")],
                 "files": {},
             },
             config=config,
         )
         messages = response["messages"]
-        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob_search")
+        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob")
         assert "/memories/config.py" in glob_message.content
         assert "/memories/settings.py" in glob_message.content
         assert "/memories/notes.txt" not in glob_message.content
@@ -712,7 +711,7 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use glob_search to find all Python files in both short-term and longterm memory")],
+                "messages": [HumanMessage(content="Use glob to find all Python files in both short-term and longterm memory")],
                 "files": {
                     "/shortterm.py": FileData(
                         content=["# Shortterm file"],
@@ -729,7 +728,7 @@ class TestFilesystem:
             config=config,
         )
         messages = response["messages"]
-        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob_search")
+        glob_message = next(message for message in messages if message.type == "tool" and message.name == "glob")
         assert "/shortterm.py" in glob_message.content
         assert "/memories/longterm.py" in glob_message.content
         assert "/shortterm.txt" not in glob_message.content
@@ -749,7 +748,7 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use grep_search to find all files containing the word 'import'")],
+                "messages": [HumanMessage(content="Use grep to find all files containing the word 'import'")],
                 "files": {
                     "/test.py": FileData(
                         content=["import os", "import sys"],
@@ -771,7 +770,7 @@ class TestFilesystem:
             config=config,
         )
         messages = response["messages"]
-        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep_search")
+        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep")
         assert "/test.py" in grep_message.content
         assert "/helper.py" in grep_message.content
         assert "/main.py" not in grep_message.content
@@ -819,13 +818,13 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use grep_search to find all files in longterm memory containing the word 'fire'")],
+                "messages": [HumanMessage(content="Use grep to find all files in longterm memory containing the word 'fire'")],
                 "files": {},
             },
             config=config,
         )
         messages = response["messages"]
-        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep_search")
+        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep")
         assert "/memories/pokemon/charmander.txt" in grep_message.content
         assert "/memories/pokemon/squirtle.txt" not in grep_message.content
         assert "/memories/pokemon/bulbasaur.txt" not in grep_message.content
@@ -864,7 +863,7 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Use grep_search to find all files containing 'DEBUG' in both short-term and longterm memory")],
+                "messages": [HumanMessage(content="Use grep to find all files containing 'DEBUG' in both short-term and longterm memory")],
                 "files": {
                     "/shortterm_config.py": FileData(
                         content=["DEBUG = False", "VERBOSE = True"],
@@ -881,7 +880,7 @@ class TestFilesystem:
             config=config,
         )
         messages = response["messages"]
-        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep_search")
+        grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep")
         assert "/shortterm_config.py" in grep_message.content
         assert "/memories/longterm_config.py" in grep_message.content
         assert "/shortterm_main.py" not in grep_message.content

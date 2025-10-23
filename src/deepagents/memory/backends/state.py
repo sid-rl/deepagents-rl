@@ -290,5 +290,5 @@ class StateBackend:
             fp_stripped = fp.lstrip("/")
             if fnmatch(fp_stripped, pattern_stripped):
                 results.append(fp)
-        
+        breakpoint()
         return sorted(results)
