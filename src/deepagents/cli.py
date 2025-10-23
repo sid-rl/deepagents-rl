@@ -554,6 +554,7 @@ async def main(assistant_id: str):
 
     shell_middleware = ShellToolMiddleware(
         workspace_root=os.getcwd(),
+        env=os.environ,  ### HACK ###
         execution_policy=HostExecutionPolicy()
     )
 
