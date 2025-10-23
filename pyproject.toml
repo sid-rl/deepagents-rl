@@ -10,10 +10,20 @@ dependencies = [
     "langchain-anthropic>=0.1.23",
     "langchain>=1.0.0a12",
     "langgraph-prebuilt>=0.7.0a2",
-    "langchain-core>=1.0.0a6"
+    "langchain-core>=1.0.0a6",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
+[project.scripts]
+deepagents = "deepagents.typer_cli:cli_main"
+
 [project.optional-dependencies]
+cli = [
+    "tavily-python>=0.3.0",
+    "requests>=2.31.0",
+]
 dev = [
     "pytest",
     "pytest-cov",
