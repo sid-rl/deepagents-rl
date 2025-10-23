@@ -2,14 +2,10 @@
 # ruff: noqa: E501
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated
 from typing_extensions import NotRequired
 
-if TYPE_CHECKING:
-    from langgraph.runtime import Runtime
-
 import os
-from datetime import UTC, datetime
 from typing import Literal
 
 from langchain.agents.middleware.types import (
@@ -27,6 +23,10 @@ from typing_extensions import TypedDict
 
 from deepagents.memory.protocol import MemoryBackend
 from deepagents.memory.backends import StateBackend
+from deepagents.memory.backends.utils import (
+    create_file_data,
+    format_content_with_line_numbers,
+)
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 MAX_LINE_LENGTH = 2000
@@ -127,85 +127,6 @@ def _validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) 
         raise ValueError(msg)
 
     return normalized
-
-
-def _format_content_with_line_numbers(
-    content: str | list[str],
-    *,
-    format_style: Literal["pipe", "tab"] = "pipe",
-    start_line: int = 1,
-) -> str:
-    r"""Format file content with line numbers for display.
-
-    Converts file content to a numbered format similar to `cat -n` output,
-    with support for two different formatting styles.
-
-    Args:
-        content: File content as a string or list of lines.
-        format_style: Format style for line numbers:
-            - `"pipe"`: Compact format like `"1|content"`
-            - `"tab"`: Right-aligned format like `"     1\tcontent"` (lines truncated at 2000 chars)
-        start_line: Starting line number (default: 1).
-
-    Returns:
-        Formatted content with line numbers prepended to each line.
-
-    Example:
-        ```python
-        content = "Hello\nWorld"
-        format_content_with_line_numbers(content, format_style="pipe")
-        # Returns: "1|Hello\n2|World"
-
-        format_content_with_line_numbers(content, format_style="tab", start_line=10)
-        # Returns: "    10\tHello\n    11\tWorld"
-        ```
-    """
-    if isinstance(content, str):
-        lines = content.split("\n")
-        if lines and lines[-1] == "":
-            lines = lines[:-1]
-    else:
-        lines = content
-
-    if format_style == "pipe":
-        return "\n".join(f"{i + start_line}|{line}" for i, line in enumerate(lines))
-
-    return "\n".join(f"{i + start_line:{LINE_NUMBER_WIDTH}d}\t{line[:MAX_LINE_LENGTH]}" for i, line in enumerate(lines))
-
-
-def _create_file_data(
-    content: str | list[str],
-    *,
-    created_at: str | None = None,
-) -> FileData:
-    r"""Create a FileData object with automatic timestamp generation.
-
-    Args:
-        content: File content as a string or list of lines.
-        created_at: Optional creation timestamp in ISO 8601 format.
-            If `None`, uses the current UTC time.
-
-    Returns:
-        FileData object with content and timestamps.
-
-    Example:
-        ```python
-        file_data = create_file_data("Hello\nWorld")
-        # Returns: {"content": ["Hello", "World"], "created_at": "2024-...",
-        #           "modified_at": "2024-..."}
-        ```
-    """
-    lines = content.split("\n") if isinstance(content, str) else content
-    # Split any lines exceeding MAX_LINE_LENGTH into chunks
-    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
-    now = datetime.now(UTC).isoformat()
-
-    return {
-        "content": lines,
-        "created_at": created_at or now,
-        "modified_at": now,
-    }
-
 
 class FilesystemState(AgentState):
     """State for the filesystem middleware."""
@@ -601,14 +522,14 @@ class FilesystemMiddleware(AgentMiddleware):
             content = tool_result.content
             if self.tool_token_limit_before_evict and len(content) > 4 * self.tool_token_limit_before_evict:
                 file_path = f"/large_tool_results/{tool_result.tool_call_id}"
-                file_data = _create_file_data(content)
+                file_data = create_file_data(content)
                 state_update = {
                     "messages": [
                         ToolMessage(
                             TOO_LARGE_TOOL_MSG.format(
                                 tool_call_id=tool_result.tool_call_id,
                                 file_path=file_path,
-                                content_sample=_format_content_with_line_numbers(file_data["content"][:10], format_style="tab", start_line=1),
+                                content_sample=format_content_with_line_numbers(file_data["content"][:10], start_line=1),
                             ),
                             tool_call_id=tool_result.tool_call_id,
                         )
@@ -629,13 +550,13 @@ class FilesystemMiddleware(AgentMiddleware):
                     content = message.content
                     if len(content) > 4 * self.tool_token_limit_before_evict:
                         file_path = f"/large_tool_results/{message.tool_call_id}"
-                        file_data = _create_file_data(content)
+                        file_data = create_file_data(content)
                         edited_message_updates.append(
                             ToolMessage(
                                 TOO_LARGE_TOOL_MSG.format(
                                     tool_call_id=message.tool_call_id,
                                     file_path=file_path,
-                                    content_sample=_format_content_with_line_numbers(file_data["content"][:10], format_style="tab", start_line=1),
+                                    content_sample=format_content_with_line_numbers(file_data["content"][:10], start_line=1),
                                 ),
                                 tool_call_id=message.tool_call_id,
                             )

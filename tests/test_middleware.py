@@ -159,7 +159,7 @@ class TestFilesystemMiddleware:
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         result = ls_tool.invoke(
             {
-                "path": "pokemon/",
+                "path": "/pokemon/",
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
