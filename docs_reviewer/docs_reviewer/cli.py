@@ -32,26 +32,8 @@ def check_api_key() -> bool:
 
 
 def show_welcome():
-    """Display welcome message."""
-    welcome_text = """
-# 📚 Docs Reviewer CLI
-
-I'm your AI-powered documentation reviewer! I can help you:
-
-- Review markdown files for code errors
-- Extract and validate code snippets
-- Generate corrected documentation
-- Answer questions about your docs
-
-Just tell me what you want to do in natural language!
-
-**Examples:**
-- "Review the file docs/tutorial.md"
-- "Check all Python code in README.md"
-- "Show me what code snippets are in example.md"
-- "Help me fix the code examples in my documentation"
-"""
-    console.print(Panel(Markdown(welcome_text), border_style="blue"))
+    """Display minimal welcome message."""
+    console.print("[dim]Docs Reviewer ready. Type your request or 'exit' to quit.[/dim]")
 
 
 def show_setup_instructions():
@@ -102,10 +84,10 @@ def chat(
         show_setup_instructions()
         raise typer.Exit(1)
 
-    # Show welcome message (only in interactive mode)
+    # Show minimal welcome message (only in interactive mode)
     if not message:
         show_welcome()
-        console.print("[dim]Type 'exit' or 'quit' to end the session[/dim]\n")
+        console.print()
 
     # Initialize the CLI agent (simple - just needs API key in env)
     try:
@@ -116,10 +98,9 @@ def chat(
 
     # Single message mode
     if message:
-        console.print("\n[bold green]Agent[/bold green]")
+        console.print("\n[bold green]Docs Reviewer[/bold green]")
         response = agent.process_message(message, console)
         console.print()
-        console.print(Markdown(response))
         return
 
     # Interactive chat loop
@@ -127,10 +108,10 @@ def chat(
     while conversation_active:
         try:
             # Get user input
-            user_input = Prompt.ask("[bold blue]You[/bold blue]")
+            user_input = Prompt.ask("\n[bold blue]You[/bold blue]")
 
             if user_input.lower() in ["exit", "quit", "bye", "goodbye"]:
-                console.print("\n[green]Goodbye! Happy documenting! 👋[/green]\n")
+                console.print()
                 conversation_active = False
                 continue
 
@@ -138,17 +119,15 @@ def chat(
                 continue
 
             # Process with agent - show streaming progress
-            console.print("\n[bold green]Agent[/bold green]")
+            console.print("\n[bold green]Docs Reviewer[/bold green]")
             response = agent.process_message(user_input, console)
-            console.print()
-            console.print(Markdown(response))
             console.print()
 
         except KeyboardInterrupt:
-            console.print("\n\n[yellow]Session interrupted. Goodbye! 👋[/yellow]\n")
+            console.print("\n")
             conversation_active = False
         except Exception as e:
-            console.print(f"\n[red]Error: {e}[/red]\n")
+            console.print(f"\n[red]Error: {e}[/red]")
 
 
 @app.callback(invoke_without_command=True)

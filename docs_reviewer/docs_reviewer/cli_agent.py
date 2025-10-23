@@ -44,29 +44,16 @@ class DocsReviewerCLIAgent:
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the CLI agent."""
-        return f"""You are a helpful AI assistant for reviewing documentation and code snippets.
+        return f"""You are a documentation reviewer that validates code snippets in markdown files.
 
-Current working directory: {self.current_working_directory}
+Working directory: {self.current_working_directory}
 
-Your capabilities:
-1. Review markdown files for code correctness
-2. Extract and list code snippets
-3. Validate code syntax and execution
-4. Generate corrected markdown files
-5. Answer questions about documentation
+When reviewing files:
+1. Use list_snippets to show what code was found
+2. Use review_markdown_file to validate and generate corrections
+3. Report results concisely
 
-When users ask you to review files:
-- Use the list_snippets tool first to show what you found
-- Then use review_markdown_file to perform the full review
-- Report the results clearly and helpfully
-
-When interacting with users:
-- Be friendly and conversational
-- Ask clarifying questions if the request is ambiguous
-- Provide clear, actionable feedback
-- Use markdown formatting in your responses
-
-Always resolve relative file paths based on the current working directory.
+Be direct and concise. Use relative paths from the working directory.
 """
 
     def _create_cli_tools(self) -> list:
@@ -265,9 +252,8 @@ Always resolve relative file paths based on the current working directory.
         Returns:
             Agent's response as a string
         """
-        from rich.live import Live
-        from rich.panel import Panel
-        from rich.text import Text
+        import json
+        from rich.syntax import Syntax
 
         # Add to conversation history
         self.conversation_history.append(HumanMessage(content=message))
@@ -275,58 +261,191 @@ Always resolve relative file paths based on the current working directory.
         # Stream the agent's response
         try:
             final_response = ""
+            seen_tool_calls = set()
+            shown_todos = set()
 
-            # Stream events from the agent
-            for event in self.agent.stream({"messages": self.conversation_history}, stream_mode="values"):
-                # Check for the latest message
-                if "messages" in event:
-                    latest_msg = event["messages"][-1]
+            # Use both stream modes: "messages" for LLM streaming and "updates" for node-level updates
+            for stream_item in self.agent.stream(
+                {"messages": self.conversation_history},
+                stream_mode=["messages", "updates"]
+            ):
+                # stream_item is a tuple: (stream_mode_name, data)
+                # e.g., ("messages", (message_chunk, metadata)) or ("updates", updates_dict)
+                if not isinstance(stream_item, tuple) or len(stream_item) != 2:
+                    continue
 
-                    # Show tool calls
-                    if hasattr(latest_msg, "tool_calls") and latest_msg.tool_calls:
-                        for tool_call in latest_msg.tool_calls:
-                            console.print(f"[yellow]🔧 Using tool: [bold]{tool_call['name']}[/bold][/yellow]")
+                stream_mode_name, data = stream_item
 
-                    # Show tool responses
-                    if hasattr(latest_msg, "name") and latest_msg.name:
-                        console.print(f"[dim]  ✓ Tool [bold]{latest_msg.name}[/bold] completed[/dim]")
+                # Handle message chunks (from messages mode)
+                # Messages mode returns (message, metadata) tuple
+                if stream_mode_name == "messages" and data is not None:
+                    # Unpack the message and metadata
+                    if isinstance(data, tuple) and len(data) == 2:
+                        content, metadata = data
+                    else:
+                        content = data
+                    # Check if this is a tool response message (skip content printing for these)
+                    is_tool_response = hasattr(content, 'name') and content.name
 
-                    # Capture final AI response
-                    if hasattr(latest_msg, "content") and isinstance(latest_msg.content, str):
-                        if latest_msg.content and hasattr(latest_msg, "type") and latest_msg.type == "ai":
-                            final_response = latest_msg.content
+                    # 1. LLM content streaming (AIMessageChunk with content) - NOT tool responses
+                    if not is_tool_response and hasattr(content, 'content') and content.content:
+                        # Content can be a string or a list of content blocks
+                        if isinstance(content.content, str):
+                            # Simple string content
+                            console.print(content.content, end="")
+                            final_response += content.content
+                        elif isinstance(content.content, list):
+                            # Anthropic content blocks format: [{'text': '...', 'type': 'text'}]
+                            for block in content.content:
+                                if isinstance(block, dict) and block.get('type') == 'text':
+                                    text = block.get('text', '')
+                                    if text:
+                                        console.print(text, end="")
+                                        final_response += text
 
-                # Show todos if they're updated
-                if "todos" in event:
-                    todos = event["todos"]
-                    if todos:
-                        console.print("\n[cyan]📋 Task Plan:[/cyan]")
-                        for todo in todos:
-                            status = todo.get("status", "pending")
-                            status_emoji = {"pending": "⏳", "in_progress": "🔄", "completed": "✅"}.get(status, "•")
-                            content = todo.get("content", "Unknown task")
-                            console.print(f"  {status_emoji} {content}")
-                        console.print()
+                    # 2. Tool calls being made
+                    if hasattr(content, 'tool_calls') and content.tool_calls:
+                        for tool_call in content.tool_calls:
+                            # Create unique ID for this tool call to avoid duplicates
+                            tool_id = tool_call.get('id', '') or str(tool_call)
 
-            # If we got a final response, use it
+                            if tool_id not in seen_tool_calls:
+                                seen_tool_calls.add(tool_id)
+
+                                # Print newlines if we were streaming content
+                                if final_response and not final_response.endswith('\n'):
+                                    console.print()
+
+                                tool_name = tool_call.get('name', 'unknown')
+                                tool_args = tool_call.get('args', {})
+
+                                # Format tool call nicely
+                                console.print(f"\n[yellow]→ {tool_name}[/yellow]")
+
+                                # Show formatted args
+                                if tool_args:
+                                    # Pretty print the arguments
+                                    for key, value in tool_args.items():
+                                        if isinstance(value, str) and len(value) > 60:
+                                            console.print(f"  [dim]{key}:[/dim] {value[:60]}...")
+                                        else:
+                                            console.print(f"  [dim]{key}:[/dim] {value}")
+
+                    # 3. Tool responses
+                    if hasattr(content, 'name') and content.name:
+                        tool_name = content.name
+                        tool_content = content.content
+
+                        # Parse and display tool results in real-time
+                        try:
+                            result = json.loads(tool_content) if isinstance(tool_content, str) else tool_content
+
+                            # Check for errors first
+                            if isinstance(result, dict) and "error" in result:
+                                console.print(f"[red]  ✗ Error: {result['error']}[/red]\n")
+                                continue
+
+                            # Special formatting for list_snippets
+                            if tool_name == "list_snippets" and isinstance(result, dict):
+                                total = result.get("total_snippets", 0)
+                                console.print(f"[green]  ✓ Found {total} snippet{'s' if total != 1 else ''}[/green]")
+
+                                snippets = result.get("snippets", [])
+                                if snippets:
+                                    for i, snip in enumerate(snippets, 1):
+                                        lang = snip.get("language", "unknown")
+                                        lines = snip.get("lines", "?")
+                                        console.print(f"    {i}. [cyan]{lang}[/cyan] (lines {lines})")
+                                console.print()
+
+                            # Special formatting for review_markdown_file
+                            elif tool_name == "review_markdown_file" and isinstance(result, dict):
+                                if result.get("success"):
+                                    total = result.get("total_snippets", 0)
+                                    successful = result.get("successful", 0)
+                                    failed = result.get("failed", 0)
+
+                                    console.print(f"[green]  ✓ Review complete[/green]")
+                                    console.print(f"    {successful}/{total} passed")
+
+                                    if failed > 0:
+                                        console.print(f"    [yellow]{failed} failed[/yellow]")
+
+                                    corrected = result.get("corrected_file", "")
+                                    if corrected:
+                                        console.print(f"    [dim]→ {corrected}[/dim]")
+                                    console.print()
+
+                            # Special formatting for find_markdown_files
+                            elif tool_name == "find_markdown_files" and isinstance(result, dict):
+                                count = result.get("count", 0)
+                                console.print(f"[green]  ✓ Found {count} markdown file{'s' if count != 1 else ''}[/green]")
+                                files = result.get("files", [])
+                                if files:
+                                    for f in files[:10]:  # Show first 10
+                                        console.print(f"    • {f}")
+                                    if len(files) > 10:
+                                        console.print(f"    [dim]... and {len(files) - 10} more[/dim]")
+                                console.print()
+
+                            # Generic success for other tools
+                            elif isinstance(result, dict) and result.get("success"):
+                                console.print(f"[green]  ✓ {tool_name}[/green]\n")
+
+                            else:
+                                # Default: just show completion
+                                console.print(f"[dim]  ✓[/dim]\n")
+
+                        except (json.JSONDecodeError, TypeError):
+                            # Non-JSON response, just show completion
+                            console.print(f"[dim]  ✓[/dim]\n")
+
+                # Handle updates (from updates mode) - for todos and other state changes
+                elif stream_mode_name == "updates" and data is not None:
+                    if isinstance(data, dict):
+                        # Check for todo updates from any node
+                        for node_name, node_data in data.items():
+                            if isinstance(node_data, dict) and "todos" in node_data:
+                                todos = node_data["todos"]
+                                if todos:
+                                    # Create a hash of current todos to avoid duplicates
+                                    todos_hash = str([(t.get("content"), t.get("status")) for t in todos])
+                                    if todos_hash not in shown_todos:
+                                        shown_todos.add(todos_hash)
+
+                                        # Print newline if we were streaming content
+                                        if final_response and not final_response.endswith('\n'):
+                                            console.print()
+
+                                        console.print("\n[dim]Tasks:[/dim]")
+                                        for todo in todos:
+                                            status = todo.get("status", "pending")
+                                            status_emoji = {"pending": "○", "in_progress": "◐", "completed": "●"}.get(status, "•")
+                                            todo_content = todo.get("content", "Unknown task")
+
+                                            # Show different formatting based on status
+                                            if status == "completed":
+                                                console.print(f"  [dim]{status_emoji} {todo_content}[/dim]")
+                                            elif status == "in_progress":
+                                                active_form = todo.get("activeForm", todo_content)
+                                                console.print(f"  {status_emoji} {active_form}")
+                                            else:
+                                                console.print(f"  [dim]{status_emoji} {todo_content}[/dim]")
+                                        console.print()
+
+            # Ensure final newline
+            if final_response and not final_response.endswith('\n'):
+                console.print()
+
+            # Add to conversation history
             if final_response:
                 self.conversation_history.append(AIMessage(content=final_response))
-                return final_response
 
-            # Otherwise get the last message from a full invoke
-            response = self.agent.invoke({"messages": self.conversation_history})
-            last_message = response["messages"][-1]
-
-            if hasattr(last_message, "content"):
-                response_text = last_message.content
-            else:
-                response_text = str(last_message)
-
-            self.conversation_history.append(AIMessage(content=response_text))
-            return response_text
+            return final_response
 
         except Exception as e:
-            error_message = f"Error processing your request: {str(e)}"
+            error_message = f"Error: {str(e)}"
+            console.print(f"\n[red]{error_message}[/red]")
             self.conversation_history.append(AIMessage(content=error_message))
             return error_message
 
