@@ -1,6 +1,6 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
-from typing import Any, Literal, Optional, TYPE_CHECKING
+from typing import Any, Literal, Optional, TYPE_CHECKING, runtime_checkable
 
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
@@ -9,6 +9,7 @@ from deepagents.memory.protocol import MemoryBackend
 from langgraph.types import Command
 
 
+@runtime_checkable
 class CompositeBackend:
     """Backend that routes operations to different backends based on path prefix.
     
@@ -190,7 +191,7 @@ class CompositeBackend:
         pattern: str,
         path: str = "/",
         include: Optional[str] = None,
-        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
+        output_mode: str = "files_with_matches",
         runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files, routing to appropriate backend(s).
