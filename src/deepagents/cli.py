@@ -11,6 +11,7 @@ from pathlib import Path
 from tavily import TavilyClient
 from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Interrupt, Command
 from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 
 from rich.console import Console
@@ -230,17 +231,21 @@ def extract_and_display_content(message_content):
                     pass  # Don't display tool results
 
 
-def execute_task(user_input: str, agent, assistant_id: str | None):
+def execute_task(user_input: str | Command, agent, assistant_id: str | None):
     """Execute any task by passing it directly to the AI agent."""
     console.print()
-    
+
     config = {
         "configurable": {"thread_id": "main"},
         "metadata": {"assistant_id": assistant_id} if assistant_id else {}
     }
-    
+    if isinstance(user_input, Command):
+        stream_input = user_input
+    else:
+        stream_input = {"messages": [{"role": "user", "content": user_input}]}
+
     for _, chunk in agent.stream(
-        {"messages": [{"role": "user", "content": user_input}]},
+        stream_input,
         stream_mode="updates",
         subgraphs=True,
         config=config,
@@ -249,10 +254,16 @@ def execute_task(user_input: str, agent, assistant_id: str | None):
         chunk = list(chunk.values())[0]
         if chunk is not None:
             # Check for interrupts
-            if "__interrupt__" in chunk:
-                result = chunk
-                break
-            
+            if isinstance(chunk, tuple) and chunk and isinstance(chunk[0], Interrupt):
+                interrupt = chunk[0]
+                for request in interrupt.value["action_requests"]:
+                    console.print(
+                        "[bold red]❕ Task interrupted:[/bold red] "
+                        f"{request['description']}\n"
+                    )
+                    break
+                return interrupt
+
             # Normal message processing
             if "messages" in chunk and chunk["messages"]:
                 last_message = chunk["messages"][-1]
@@ -319,8 +330,9 @@ def execute_task(user_input: str, agent, assistant_id: str | None):
                         if has_text_content:
                             extract_and_display_content(message_content)
                             console.print()
-    
+
     console.print()
+    return None
 
 
 async def simple_cli(agent, assistant_id: str | None):
@@ -340,24 +352,67 @@ async def simple_cli(agent, assistant_id: str | None):
         console.print("[dim]  Or add it to your .env file. Get your key at: https://tavily.com[/dim]")
     
     console.print()
+    user_input = None
 
     while True:
-        try:
-            console.print("[bold green]❯[/bold green] ", end="")
-            user_input = input().strip()
-        except EOFError:
-            break
+        if not isinstance(user_input, Command):
+            try:
+                console.print("[bold green]❯[/bold green] ", end="")
+                user_input = input().strip()
+            except EOFError:
+                break
 
-        if not user_input:
-            continue
+            if not user_input:
+                continue
 
-        if user_input.lower() in ["quit", "exit", "q"]:
-            console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
-            break
+            if user_input.lower() in ["quit", "exit", "q"]:
+                console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
+                break
 
-        else:
             console.print("[dim]✓ Command sent[/dim]")
-            execute_task(user_input, agent, assistant_id)
+
+        interrupt = execute_task(user_input, agent, assistant_id)
+
+        if interrupt is not None:
+            console.print("[bold]1[/bold] [green]Approve[/green]")
+            console.print("[bold]2[/bold] [red]Reject[/red]")
+            console.print()
+            console.print("[bold cyan]Choice:[/bold cyan] ", end="")
+
+            try:
+                choice = input().strip()
+
+                if choice == "1":
+                    decision = {"type": "approve"}
+                    console.print("[dim]✓ Action approved[/dim]\n")
+                elif choice == "2":
+                    console.print("[bold cyan]Rejection message:[/bold cyan] ", end="")
+                    rejection_message = input().strip()
+
+                    if not rejection_message:
+                        rejection_message = "Action rejected by user."
+
+                    decision = {
+                        "type": "reject",
+                        "message": rejection_message
+                    }
+                    console.print("[dim]✓ Action rejected with feedback[/dim]\n")
+                else:
+                    console.print("[yellow]Invalid choice, defaulting to reject[/yellow]")
+                    decision = {
+                        "type": "reject",
+                        "message": "Invalid choice - action rejected by user."
+                    }
+
+                user_input = Command(resume={"decisions": [decision]})
+                continue
+
+            except EOFError:
+                console.print("\n[yellow]Interrupt cancelled[/yellow]")
+                user_input = None
+                continue
+        else:
+            user_input = None
 
 
 def list_agents():
@@ -528,6 +583,7 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
         memory_backend=backend,
         use_longterm_memory=long_term_backend,
         middleware=agent_middleware,
+        interrupt_on={"shell": True},
     ).with_config(config)
     
     agent.checkpointer = InMemorySaver()
