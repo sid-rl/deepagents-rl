@@ -2,14 +2,10 @@
 # ruff: noqa: E501
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated
 from typing_extensions import NotRequired
 
-if TYPE_CHECKING:
-    from langgraph.runtime import Runtime
-
 import os
-from datetime import UTC, datetime
 from typing import Literal
 
 from langchain.agents.middleware.types import (
@@ -26,9 +22,12 @@ from langgraph.types import Command
 from typing_extensions import TypedDict
 
 from deepagents.memory.protocol import MemoryBackend
-from deepagents.memory.backends import StateBackend, CompositeBackend, StoreBackend
+from deepagents.memory.backends import StateBackend
+from deepagents.memory.backends.utils import (
+    create_file_data,
+    format_content_with_line_numbers,
+)
 
-MEMORIES_PREFIX = "/memories/"
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
@@ -129,83 +128,6 @@ def _validate_path(path: str, *, allowed_prefixes: Sequence[str] | None = None) 
 
     return normalized
 
-
-def _format_content_with_line_numbers(
-    content: str | list[str],
-    *,
-    format_style: Literal["pipe", "tab"] = "pipe",
-    start_line: int = 1,
-) -> str:
-    r"""Format file content with line numbers for display.
-
-    Converts file content to a numbered format similar to `cat -n` output,
-    with support for two different formatting styles.
-
-    Args:
-        content: File content as a string or list of lines.
-        format_style: Format style for line numbers:
-            - `"pipe"`: Compact format like `"1|content"`
-            - `"tab"`: Right-aligned format like `"     1\tcontent"` (lines truncated at 2000 chars)
-        start_line: Starting line number (default: 1).
-
-    Returns:
-        Formatted content with line numbers prepended to each line.
-
-    Example:
-        ```python
-        content = "Hello\nWorld"
-        format_content_with_line_numbers(content, format_style="pipe")
-        # Returns: "1|Hello\n2|World"
-
-        format_content_with_line_numbers(content, format_style="tab", start_line=10)
-        # Returns: "    10\tHello\n    11\tWorld"
-        ```
-    """
-    if isinstance(content, str):
-        lines = content.split("\n")
-        if lines and lines[-1] == "":
-            lines = lines[:-1]
-    else:
-        lines = content
-
-    if format_style == "pipe":
-        return "\n".join(f"{i + start_line}|{line}" for i, line in enumerate(lines))
-
-    return "\n".join(f"{i + start_line:{LINE_NUMBER_WIDTH}d}\t{line[:MAX_LINE_LENGTH]}" for i, line in enumerate(lines))
-
-
-def _create_file_data(
-    content: str | list[str],
-    *,
-    created_at: str | None = None,
-) -> FileData:
-    r"""Create a FileData object with automatic timestamp generation.
-
-    Args:
-        content: File content as a string or list of lines.
-        created_at: Optional creation timestamp in ISO 8601 format.
-            If `None`, uses the current UTC time.
-
-    Returns:
-        FileData object with content and timestamps.
-
-    Example:
-        ```python
-        file_data = create_file_data("Hello\nWorld")
-        # Returns: {"content": ["Hello", "World"], "created_at": "2024-...",
-        #           "modified_at": "2024-..."}
-        ```
-    """
-    lines = content.split("\n") if isinstance(content, str) else content
-    now = datetime.now(UTC).isoformat()
-
-    return {
-        "content": lines,
-        "created_at": created_at or now,
-        "modified_at": now,
-    }
-
-
 class FilesystemState(AgentState):
     """State for the filesystem middleware."""
 
@@ -295,11 +217,6 @@ All file paths must start with a /.
 - edit_file: edit a file in the filesystem
 - glob: find files matching a pattern (e.g., "**/*.py")
 - grep: search for text within files"""
-FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT = f"""
-
-You also have access to a longterm filesystem in which you can store files that you want to keep around for longer than the current conversation.
-In order to interact with the longterm filesystem, you can use those same tools, but filenames must be prefixed with the {MEMORIES_PREFIX} path.
-Remember, to interact with the longterm filesystem, you must prefix the filename with the {MEMORIES_PREFIX} path."""
 
 
 def _ls_tool_generator(
@@ -427,8 +344,8 @@ def _glob_tool_generator(
     tool_description = custom_description or GLOB_TOOL_DESCRIPTION
 
     @tool(description=tool_description)
-    def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState]) -> list[str]:
-        return backend.glob(pattern, runtime=runtime)
+    def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState], path: str = "/") -> list[str]:
+        return backend.glob(pattern, path=path, runtime=runtime)
 
     return glob
 
@@ -507,29 +424,32 @@ class FilesystemMiddleware(AgentMiddleware):
     """Middleware for providing filesystem tools to an agent.
 
     This middleware adds six filesystem tools to the agent: ls, read_file, write_file,
-    edit_file, glob, and grep. Files can be stored in two locations:
-    - Short-term: In the agent's state (ephemeral, lasts only for the conversation)
-    - Long-term: In a persistent store (persists across conversations when enabled)
+    edit_file, glob, and grep. Files can be stored using any backend that implements
+    the MemoryBackend protocol.
 
     Args:
-        backend: Optional backend for file storage. If not provided, defaults to StateBackend.
-        long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend
-            with StateBackend as default and long_term_backend for /memories/ prefix.
+        memory_backend: Backend for file storage. If not provided, defaults to StateBackend
+            (ephemeral storage in agent state). For persistent storage or hybrid setups,
+            use CompositeBackend with custom routes.
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
         tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
 
     Example:
         ```python
-        from langchain.agents.middleware.filesystem import FilesystemMiddleware
+        from deepagents.middleware.filesystem import FilesystemMiddleware
+        from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
         from langchain.agents import create_agent
 
-        # Short-term memory only
+        # Ephemeral storage only (default)
         agent = create_agent(middleware=[FilesystemMiddleware()])
 
-        # With long-term memory
-        from deepagents.memory.backends import StoreBackend
-        agent = create_agent(middleware=[FilesystemMiddleware(long_term_backend=StoreBackend())])
+        # With hybrid storage (ephemeral + persistent /memories/)
+        backend = CompositeBackend(
+            default=StateBackend(),
+            routes={"/memories/": StoreBackend()}
+        )
+        agent = create_agent(middleware=[FilesystemMiddleware(memory_backend=backend)])
         ```
     """
 
@@ -538,8 +458,7 @@ class FilesystemMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        backend: MemoryBackend | None = None,
-        long_term_memory: MemoryBackend | None | bool = None,
+        memory_backend: MemoryBackend | None = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
@@ -547,40 +466,18 @@ class FilesystemMiddleware(AgentMiddleware):
         """Initialize the filesystem middleware.
 
         Args:
-            backend: Optional backend for file storage. If provided, uses it directly.
-            long_term_memory: Optional backend for /memories/ files. If provided, creates CompositeBackend.
+            memory_backend: Backend for file storage. Defaults to StateBackend if not provided.
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
         """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
-        # Handle shortcut for default longterm memory
-        if long_term_memory is True:
-            long_term_backend = StoreBackend()
-        elif long_term_memory is False:
-            long_term_backend = None
-        else:
-            long_term_backend = long_term_memory
-        if backend is not None and long_term_backend is not None:
-            self.backend = CompositeBackend(
-                default=backend,
-                routes={MEMORIES_PREFIX: long_term_backend}
-            )
-        elif backend is not None:
-            self.backend = backend
-        elif long_term_backend is not None:
-            self.backend = CompositeBackend(
-                default=StateBackend(),
-                routes={MEMORIES_PREFIX: long_term_backend}
-            )
-        else:
-            self.backend = StateBackend()
-        
-        self.system_prompt = FILESYSTEM_SYSTEM_PROMPT
-        if long_term_backend is not None:
-            self.system_prompt += FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT
-        if system_prompt is not None:
-            self.system_prompt = system_prompt
+
+        # Use provided backend or default to StateBackend
+        self.backend = memory_backend if memory_backend is not None else StateBackend()
+
+        # Set system prompt (allow full override)
+        self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT
 
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
 
@@ -625,14 +522,14 @@ class FilesystemMiddleware(AgentMiddleware):
             content = tool_result.content
             if self.tool_token_limit_before_evict and len(content) > 4 * self.tool_token_limit_before_evict:
                 file_path = f"/large_tool_results/{tool_result.tool_call_id}"
-                file_data = _create_file_data(content)
+                file_data = create_file_data(content)
                 state_update = {
                     "messages": [
                         ToolMessage(
                             TOO_LARGE_TOOL_MSG.format(
                                 tool_call_id=tool_result.tool_call_id,
                                 file_path=file_path,
-                                content_sample=_format_content_with_line_numbers(file_data["content"][:10], format_style="tab", start_line=1),
+                                content_sample=format_content_with_line_numbers(file_data["content"][:10], start_line=1),
                             ),
                             tool_call_id=tool_result.tool_call_id,
                         )
@@ -653,13 +550,13 @@ class FilesystemMiddleware(AgentMiddleware):
                     content = message.content
                     if len(content) > 4 * self.tool_token_limit_before_evict:
                         file_path = f"/large_tool_results/{message.tool_call_id}"
-                        file_data = _create_file_data(content)
+                        file_data = create_file_data(content)
                         edited_message_updates.append(
                             ToolMessage(
                                 TOO_LARGE_TOOL_MSG.format(
                                     tool_call_id=message.tool_call_id,
                                     file_path=file_path,
-                                    content_sample=_format_content_with_line_numbers(file_data["content"][:10], format_style="tab", start_line=1),
+                                    content_sample=format_content_with_line_numbers(file_data["content"][:10], start_line=1),
                                 ),
                                 tool_call_id=message.tool_call_id,
                             )

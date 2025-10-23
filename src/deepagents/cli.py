@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from deepagents.memory.backends.filesystem import FilesystemBackend
+from deepagents.memory.backends import CompositeBackend
 from deepagents.middleware.agent_memory import AgentMemoryMiddleware
 from pathlib import Path
 import shutil
@@ -502,8 +503,6 @@ async def main(assistant_id: str):
         execution_policy=HostExecutionPolicy()
     )
 
-    backend = FilesystemBackend()
-    
     # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
     agent_dir = Path.home() / ".deepagents" / assistant_id
     agent_dir.mkdir(parents=True, exist_ok=True)
@@ -516,6 +515,12 @@ async def main(assistant_id: str):
     # This handles both /memories/ files and /agent.md
     long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
+    # Composite backend: current working directory for default, agent directory for /memories/
+    backend = CompositeBackend(
+        default=FilesystemBackend(),
+        routes={"/memories/": long_term_backend}
+    )
+
     # Use the same backend for agent memory middleware
     agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend), shell_middleware]
     system_prompt = f"""### Current Working Directory
@@ -526,7 +531,6 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
         system_prompt=system_prompt,
         tools=tools,
         memory_backend=backend,
-        use_longterm_memory=long_term_backend,
         middleware=agent_middleware,
     ).with_config(config)
     

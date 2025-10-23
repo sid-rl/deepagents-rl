@@ -1,6 +1,6 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
@@ -190,7 +190,7 @@ class CompositeBackend:
         pattern: str,
         path: str = "/",
         include: Optional[str] = None,
-        output_mode: str = "files_with_matches",
+        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
         runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files, routing to appropriate backend(s).
@@ -206,9 +206,9 @@ class CompositeBackend:
             Formatted search results based on output_mode.
         """
         for route_prefix, backend in self.sorted_routes:
-            if path.startswith(route_prefix):
+            if path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1:]
-                result = backend.grep(pattern, search_path, include, output_mode, runtime=runtime)
+                result = backend.grep(pattern, search_path if search_path else "/", include, output_mode, runtime=runtime)
                 if result.startswith("No matches found"):
                     return result
                 
@@ -252,32 +252,33 @@ class CompositeBackend:
     
     def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern across all backends.
-        
+
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
             path: Base path to search from (default "/")
             runtime: Optional ToolRuntime for backends that need it.
-        
+
         Returns:
             List of absolute file paths matching the pattern.
         """
         results = []
-        
+
+        # Route based on path, not pattern
         for route_prefix, backend in self.sorted_routes:
-            if pattern.startswith(route_prefix):
-                search_pattern = pattern[len(route_prefix) - 1:]
-                if search_pattern.startswith("/"):
-                    search_pattern = search_pattern[1:]
-                matches = backend.glob(search_pattern, path, runtime=runtime)
+            if path.startswith(route_prefix.rstrip("/")):
+                # Path matches a specific route - search only that backend
+                search_path = path[len(route_prefix) - 1:]
+                matches = backend.glob(pattern, search_path if search_path else "/", runtime=runtime)
                 results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
                 return sorted(results)
-        
+
+        # Path doesn't match any specific route - search default backend AND all routed backends
         default_matches = self.default.glob(pattern, path, runtime=runtime)
         results.extend(default_matches)
-        
+
+        # Also search in all routed backends and prefix results
         for route_prefix, backend in self.routes.items():
-            pattern_without_slash = pattern.lstrip("/")
-            matches = backend.glob(pattern_without_slash, path, runtime=runtime)
+            matches = backend.glob(pattern, "/", runtime=runtime)
             results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
-        
+
         return sorted(results)

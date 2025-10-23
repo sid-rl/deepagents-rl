@@ -13,12 +13,12 @@ from langgraph.store.memory import InMemoryStore
 
 from deepagents.middleware.filesystem import (
     FILESYSTEM_SYSTEM_PROMPT,
-    FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT,
     FileData,
     FilesystemMiddleware,
     FilesystemState,
-    _search_store_paginated,
 )
+from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
+from deepagents.memory.backends.utils import create_file_data, update_file_data
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
 
@@ -33,8 +33,8 @@ class TestAddMiddleware:
         assert "read_file" in agent_tools
         assert "write_file" in agent_tools
         assert "edit_file" in agent_tools
-        assert "glob_search" in agent_tools
-        assert "grep_search" in agent_tools
+        assert "glob" in agent_tools
+        assert "grep" in agent_tools
 
     def test_subagent_middleware(self):
         middleware = [SubAgentMiddleware(default_tools=[], subagents=[], default_model="claude-sonnet-4-20250514")]
@@ -50,47 +50,59 @@ class TestAddMiddleware:
         assert "read_file" in agent_tools
         assert "write_file" in agent_tools
         assert "edit_file" in agent_tools
-        assert "glob_search" in agent_tools
-        assert "grep_search" in agent_tools
+        assert "glob" in agent_tools
+        assert "grep" in agent_tools
         assert "task" in agent_tools
 
 
 class TestFilesystemMiddleware:
-    def test_init_local(self):
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        assert middleware.long_term_memory is False
+    def test_init_default(self):
+        middleware = FilesystemMiddleware()
+        assert isinstance(middleware.backend, StateBackend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
-    def test_init_longterm(self):
-        middleware = FilesystemMiddleware(long_term_memory=True)
-        assert middleware.long_term_memory is True
-        assert middleware.system_prompt == (FILESYSTEM_SYSTEM_PROMPT + FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT)
+    def test_init_with_composite_backend(self):
+        backend = CompositeBackend(
+            default=StateBackend(),
+            routes={"/memories/": StoreBackend()}
+        )
+        middleware = FilesystemMiddleware(memory_backend=backend)
+        assert isinstance(middleware.backend, CompositeBackend)
+        assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
-    def test_init_custom_system_prompt_shortterm(self):
-        middleware = FilesystemMiddleware(long_term_memory=False, system_prompt="Custom system prompt")
-        assert middleware.long_term_memory is False
+    def test_init_custom_system_prompt_default(self):
+        middleware = FilesystemMiddleware(system_prompt="Custom system prompt")
+        assert isinstance(middleware.backend, StateBackend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
-    def test_init_custom_system_prompt_longterm(self):
-        middleware = FilesystemMiddleware(long_term_memory=True, system_prompt="Custom system prompt")
-        assert middleware.long_term_memory is True
+    def test_init_custom_system_prompt_with_composite(self):
+        backend = CompositeBackend(
+            default=StateBackend(),
+            routes={"/memories/": StoreBackend()}
+        )
+        middleware = FilesystemMiddleware(memory_backend=backend, system_prompt="Custom system prompt")
+        assert isinstance(middleware.backend, CompositeBackend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
-    def test_init_custom_tool_descriptions_shortterm(self):
-        middleware = FilesystemMiddleware(long_term_memory=False, custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert middleware.long_term_memory is False
+    def test_init_custom_tool_descriptions_default(self):
+        middleware = FilesystemMiddleware(custom_tool_descriptions={"ls": "Custom ls tool description"})
+        assert isinstance(middleware.backend, StateBackend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
-    def test_init_custom_tool_descriptions_longterm(self):
-        middleware = FilesystemMiddleware(long_term_memory=True, custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert middleware.long_term_memory is True
-        assert middleware.system_prompt == (FILESYSTEM_SYSTEM_PROMPT + FILESYSTEM_SYSTEM_PROMPT_LONGTERM_SUPPLEMENT)
+    def test_init_custom_tool_descriptions_with_composite(self):
+        backend = CompositeBackend(
+            default=StateBackend(),
+            routes={"/memories/": StoreBackend()}
+        )
+        middleware = FilesystemMiddleware(memory_backend=backend, custom_tool_descriptions={"ls": "Custom ls tool description"})
+        assert isinstance(middleware.backend, CompositeBackend)
+        assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
@@ -110,7 +122,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
+        middleware = FilesystemMiddleware()
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         result = ls_tool.invoke(
             {"runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={})}
@@ -143,11 +155,11 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
+        middleware = FilesystemMiddleware()
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         result = ls_tool.invoke(
             {
-                "path": "pokemon/",
+                "path": "/pokemon/",
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
@@ -180,8 +192,11 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob_search")
+        middleware = FilesystemMiddleware(
+            memory_backend=StateBackend()
+        )
+        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
+        print(glob_search_tool)
         result = glob_search_tool.invoke(
             {
                 "pattern": "*.py",
@@ -192,9 +207,8 @@ class TestFilesystemMiddleware:
         assert "/test.py" in result
         assert "/test.txt" not in result
         assert "/pokemon/charmander.py" not in result
-        lines = result.split("\n")
-        assert len(lines) == 1
-        assert lines[0] == "/test.py"
+        assert len(result) == 1
+        assert result[0] == "/test.py"
 
     def test_glob_search_shortterm_wildcard_pattern(self):
         state = FilesystemState(
@@ -217,8 +231,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
                 "pattern": "**/*.py",
@@ -250,8 +264,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
                 "pattern": "*.py",
@@ -284,8 +298,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
                 "pattern": "*.{py,pyi}",
@@ -307,16 +321,16 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
                 "pattern": "*.py",
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
-        assert result == "No files found"
-
+        print(glob_search_tool)
+        assert result == []
     def test_grep_search_shortterm_files_with_matches(self):
         state = FilesystemState(
             messages=[],
@@ -338,8 +352,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -361,8 +375,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -370,8 +384,8 @@ class TestFilesystemMiddleware:
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
-        assert "/test.py:1:import os" in result
-        assert "/test.py:2:import sys" in result
+        assert "1: import os" in result
+        assert "2: import sys" in result
         assert "print" not in result
 
     def test_grep_search_shortterm_count_mode(self):
@@ -390,8 +404,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -418,8 +432,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -446,8 +460,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -469,8 +483,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": r"def \w+\(",
@@ -478,8 +492,9 @@ class TestFilesystemMiddleware:
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
-        assert "/test.py:1:def hello():" in result
-        assert "/test.py:2:def world():" in result
+        print(result)
+        assert "1: def hello():" in result
+        assert "2: def world():" in result
         assert "x = 5" not in result
 
     def test_grep_search_shortterm_no_matches(self):
@@ -493,8 +508,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
@@ -514,8 +529,8 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(long_term_memory=False)
-        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep_search")
+        middleware = FilesystemMiddleware()
+        grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
                 "pattern": "[invalid",
@@ -527,7 +542,7 @@ class TestFilesystemMiddleware:
     def test_search_store_paginated_empty(self):
         """Test pagination with no items."""
         store = InMemoryStore()
-        result = _search_store_paginated(store, ("filesystem",))
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",))
         assert result == []
 
     def test_search_store_paginated_less_than_page_size(self):
@@ -544,7 +559,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = _search_store_paginated(store, ("filesystem",), page_size=10)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)
         assert len(result) == 5
         # Check that all files are present (order may vary)
         keys = {item.key for item in result}
@@ -564,7 +579,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = _search_store_paginated(store, ("filesystem",), page_size=10)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)
         assert len(result) == 10
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(10)}
@@ -583,7 +598,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = _search_store_paginated(store, ("filesystem",), page_size=100)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=100)
         assert len(result) == 250
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(250)}
@@ -604,7 +619,7 @@ class TestFilesystemMiddleware:
             )
 
         # Filter for type="test" (every other item, so 10 items)
-        result = _search_store_paginated(store, ("filesystem",), filter={"type": "test"}, page_size=5)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), filter={"type": "test"}, page_size=5)
         assert len(result) == 10
         # Verify all returned items have type="test"
         for item in result:
@@ -625,11 +640,46 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = _search_store_paginated(store, ("filesystem",), page_size=20)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=20)
         # Should make 3 calls: 20, 20, 15
         assert len(result) == 55
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(55)}
+
+    def test_create_file_data_splits_long_lines(self):
+        long_line = "a" * 3500
+        short_line = "short line"
+        content = f"{short_line}\n{long_line}"
+
+        file_data = create_file_data(content)
+
+        for line in file_data["content"]:
+            assert len(line) <= 2000
+
+        assert len(file_data["content"]) == 3
+        assert file_data["content"][0] == short_line
+        assert file_data["content"][1] == "a" * 2000
+        assert file_data["content"][2] == "a" * 1500
+
+    def test_update_file_data_splits_long_lines(self):
+        initial_file_data = create_file_data("initial content")
+
+        long_line = "b" * 5000
+        short_line = "another short line"
+        new_content = f"{short_line}\n{long_line}"
+
+        updated_file_data = update_file_data(initial_file_data, new_content)
+
+        for line in updated_file_data["content"]:
+            assert len(line) <= 2000
+
+        assert len(updated_file_data["content"]) == 4
+        assert updated_file_data["content"][0] == short_line
+        assert updated_file_data["content"][1] == "b" * 2000
+        assert updated_file_data["content"][2] == "b" * 2000
+        assert updated_file_data["content"][3] == "b" * 1000
+
+        assert updated_file_data["created_at"] == initial_file_data["created_at"]
 
 
 @pytest.mark.requires("langchain_openai")

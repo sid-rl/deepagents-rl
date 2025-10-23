@@ -151,13 +151,14 @@ class MemoryBackend(Protocol):
         """
         ...
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
-        
+
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
+            path: Base path to search from (default: "/")
             runtime: Optional ToolRuntime to access state (required for StateBackend).
-        
+
         Returns:
             List of absolute file paths matching the pattern.
         """
