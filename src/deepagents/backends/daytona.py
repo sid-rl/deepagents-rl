@@ -6,12 +6,12 @@ import os
 from typing import TYPE_CHECKING, Optional
 
 from daytona import Daytona, DaytonaConfig
-from daytona.common.filesystem import FileUpload as DaytonaFileUpload
 
 from deepagents.backends.fs import FileInfo, FileSystem, FileSystemCapabilities
 from deepagents.backends.pagination import PageResults, PaginationCursor
 from deepagents.backends.process import ExecuteResponse, Process, ProcessCapabilities
-from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, SandboxProvider
+from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, \
+    SandboxProvider
 
 if TYPE_CHECKING:
     from daytona import Sandbox as DaytonaSandboxClient
@@ -62,23 +62,29 @@ class DaytonaFileSystem(FileSystem):
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
-        """Read file content with line numbers."""
+        """Read file content with line numbers using a single shell command."""
         try:
-            content = self.download_file(file_path)
-            lines = content.decode("utf-8").splitlines()
+            # Single command that checks file, reads lines, and formats with line numbers
+            # tail -n +N starts from line N, head limits output, nl adds line numbers
+            start_line = offset + 1
+            cmd = (
+                f"if [ ! -f '{file_path}' ]; then "
+                f"echo 'Error: File not found'; exit 1; "
+                f"elif [ ! -s '{file_path}' ]; then "
+                f"echo 'System reminder: File exists but has empty contents'; "
+                f"else "
+                f"tail -n +{start_line} '{file_path}' | head -n {limit} | nl -ba -nln -w6 -s$'\\t' -v{start_line}; "
+                f"fi"
+            )
+            result = self._sandbox.process.exec({"command": cmd})
 
-            if not lines:
-                return "System reminder: File exists but has empty contents"
+            output = result.get("result", "").rstrip()
+            exit_code = result.get("exit_code", 0)
 
-            # Apply offset and limit
-            selected_lines = lines[offset : offset + limit]
+            if exit_code != 0 or "Error: File not found" in output:
+                return f"Error: File '{file_path}' not found"
 
-            # Format with line numbers (1-indexed)
-            result = []
-            for i, line in enumerate(selected_lines, start=offset + 1):
-                result.append(f"{i:6d}\t{line}")
-
-            return "\n".join(result)
+            return output
         except Exception as e:
             return f"Error: File '{file_path}' not found"
 
@@ -89,32 +95,40 @@ class DaytonaFileSystem(FileSystem):
         new_string: str,
         replace_all: bool = False,
     ) -> str:
-        """Edit a file by replacing string occurrences."""
+        """Edit a file by replacing string occurrences using a single shell command."""
         try:
-            content = self.download_file(file_path)
-            text = content.decode("utf-8")
+            # Escape single quotes in the strings for shell safety
+            old_escaped = old_string.replace("'", "'\\''")
+            new_escaped = new_string.replace("'", "'\\''")
 
-            # Count occurrences
-            count = text.count(old_string)
+            # Use Python one-liner for complex string replacement logic
+            python_code = (
+                f"import sys; "
+                f"text = open('{file_path}', 'r').read(); "
+                f"old = '''{old_escaped}'''; "
+                f"new = '''{new_escaped}'''; "
+                f"count = text.count(old); "
+                f"sys.exit(1) if count == 0 else (sys.exit(2) if count > 1 and not {replace_all} else None); "
+                f"result = text.replace(old, new) if {replace_all} else text.replace(old, new, 1); "
+                f"open('{file_path}', 'w').write(result); "
+                f"print(count)"
+            )
 
-            if count == 0:
+            cmd = f'python3 -c "{python_code}" 2>&1'
+            result = self._sandbox.process.exec({"command": cmd})
+
+            exit_code = result.get("exit_code", 0)
+            output = result.get("result", "").strip()
+
+            if exit_code == 1:
                 return f"Error: String not found in file: '{old_string}'"
+            elif exit_code == 2:
+                # Get count from before the error
+                return f"Error: String '{old_string}' appears multiple times. Use replace_all=True to replace all occurrences."
+            elif exit_code != 0:
+                return f"Error: File '{file_path}' not found"
 
-            if count > 1 and not replace_all:
-                return (
-                    f"Error: String '{old_string}' appears {count} times. "
-                    f"Use replace_all=True to replace all occurrences."
-                )
-
-            # Perform replacement
-            if replace_all:
-                new_text = text.replace(old_string, new_string)
-            else:
-                new_text = text.replace(old_string, new_string, 1)
-
-            # Upload the modified file
-            self.upload_file(new_text.encode("utf-8"), file_path)
-
+            count = output
             return f"Successfully replaced {count} occurrence(s) in {file_path}"
         except Exception as e:
             return f"Error: File '{file_path}' not found"
@@ -132,14 +146,56 @@ class DaytonaFileSystem(FileSystem):
         include: Optional[str] = None,
         output_mode: str = "files_with_matches",
     ) -> str:
-        """Search for a pattern in files."""
-        # This would require executing grep command in the sandbox
-        raise NotImplementedError("Grep not yet implemented for Daytona backend")
+        """Search for a pattern in files using a single shell command."""
+        try:
+            # Build grep command based on output_mode
+            grep_opts = "-r"  # recursive
+
+            if output_mode == "files_with_matches":
+                grep_opts += "l"  # files with matches
+            elif output_mode == "count":
+                grep_opts += "c"  # count per file
+
+            # Add include pattern if specified
+            include_pattern = ""
+            if include:
+                include_pattern = f"--include='{include}'"
+
+            # Escape pattern for shell
+            pattern_escaped = pattern.replace("'", "'\\''")
+
+            cmd = f"grep {grep_opts} {include_pattern} -e '{pattern_escaped}' '{path}' 2>/dev/null || true"
+            result = self._sandbox.process.exec({"command": cmd})
+
+            return result.get("result", "").rstrip()
+        except Exception as e:
+            return ""
 
     def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern."""
-        # This would require executing find command or similar in the sandbox
-        raise NotImplementedError("Glob not yet implemented for Daytona backend")
+        """Find files matching a glob pattern using a single shell command."""
+        try:
+            # Escape pattern for shell
+            pattern_escaped = pattern.replace("'", "'\\''")
+
+            # Use Python's glob module for proper glob pattern matching
+            python_code = (
+                f"import glob; "
+                f"import os; "
+                f"os.chdir('{path}'); "
+                f"results = sorted(glob.glob('{pattern_escaped}', recursive=True)); "
+                f"print('\\n'.join(results))"
+            )
+
+            cmd = f'python3 -c "{python_code}" 2>/dev/null'
+            result = self._sandbox.process.exec({"command": cmd})
+
+            output = result.get("result", "").strip()
+            if not output:
+                return []
+
+            return output.split("\n")
+        except Exception as e:
+            return []
 
     @property
     def get_capabilities(self) -> FileSystemCapabilities:
@@ -151,8 +207,8 @@ class DaytonaFileSystem(FileSystem):
             "can_read": True,
             "can_edit": True,
             "can_delete": False,
-            "can_grep": False,
-            "can_glob": False,
+            "can_grep": True,
+            "can_glob": True,
         }
 
 
@@ -178,19 +234,11 @@ class DaytonaProcess(Process):
             cwd: Working directory to execute the command in.
             timeout: Maximum execution time in seconds (default: 30 minutes).
         """
-        try:
-            response = self._sandbox.process.execute_session_command(
-                self._session_id, {"command": command}
-            )
-            return ExecuteResponse(
-                result=response.get("result", ""),
-                exit_code=response.get("exit_code"),
-            )
-        except Exception as e:
-            return ExecuteResponse(
-                result=f"Error executing command: {str(e)}",
-                exit_code=1,
-            )
+        response = self._sandbox.process.exec(self._session_id, {"command": command})
+        return ExecuteResponse(
+            result=response.get("result", ""),
+            exit_code=response.get("exit_code"),
+        )
 
     def get_capabilities(self) -> ProcessCapabilities:
         """Get the process capabilities."""
@@ -235,26 +283,24 @@ class DaytonaSandbox(Sandbox):
 class DaytonaSandboxProvider(SandboxProvider):
     """Daytona sandbox provider implementation."""
 
-    def __init__(
-        self, *, daytona_client: Optional[Daytona] = None, api_key: Optional[str] = None
-    ) -> None:
+    def __init__(self, *, client: Optional[Daytona] = None, api_key: Optional[str] = None) -> None:
         """Initialize the DaytonaSandboxProvider with a Daytona client.
 
         Args:
-            daytona_client: An existing Daytona client instance
+            client: An existing Daytona client instance
             api_key: API key for creating a new Daytona client
         """
-        if daytona_client and api_key:
+        if client and api_key:
             raise ValueError("Provide either daytona_client or api_key, not both.")
 
-        if daytona_client is None:
+        if client is None:
             api_key = api_key or os.environ.get("DAYTONA_API_KEY")
             if api_key is None:
                 raise ValueError("Either daytona_client or api_key must be provided.")
             config = DaytonaConfig(api_key=api_key)
-            daytona_client = Daytona(config)
+            client = Daytona(config)
 
-        self._client = daytona_client
+        self._client = client
 
     def get_or_create(self, id: str | None) -> Sandbox:
         """Get or create a sandbox instance by ID.
