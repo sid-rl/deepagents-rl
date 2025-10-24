@@ -195,7 +195,7 @@ Usage:
 - The grep tool searches for text patterns across files
 - The pattern parameter is the text to search for (literal string, not regex)
 - The path parameter filters which directory to search in (default is `/` for all files)
-- The include parameter accepts a glob pattern to filter which files to search (e.g., `*.py`)
+- The glob parameter accepts a glob pattern to filter which files to search (e.g., `*.py`)
 - The output_mode parameter controls the output format:
   - `files_with_matches`: List only file paths containing matches (default)
   - `content`: Show matching lines with file path and line numbers
@@ -203,7 +203,7 @@ Usage:
 
 Examples:
 - Search all files: `grep(pattern="TODO")`
-- Search Python files only: `grep(pattern="import", include="*.py")`
+- Search Python files only: `grep(pattern="import", glob="*.py")`
 - Show matching lines: `grep(pattern="error", output_mode="content")`"""
 
 FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`
@@ -220,13 +220,13 @@ All file paths must start with a /.
 
 
 def _ls_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the ls (list files) tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -236,21 +236,23 @@ def _ls_tool_generator(
 
     @tool(description=tool_description)
     def ls(runtime: ToolRuntime[None, FilesystemState], path: str | None = None) -> list[str]:
-        prefix = _validate_path(path) if path is not None else None
-        files = backend.ls(prefix, runtime=runtime)
+        # Resolve backend if it's a factory function
+        resolved_backend = backend(runtime) if callable(backend) else backend
+        validated_path = _validate_path(path) if path is not None else None
+        files = resolved_backend.ls(validated_path)
         return files
 
     return ls
 
 
 def _read_file_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the read_file tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -265,20 +267,21 @@ def _read_file_tool_generator(
         offset: int = DEFAULT_READ_OFFSET,
         limit: int = DEFAULT_READ_LIMIT,
     ) -> str:
+        resolved_backend = backend(runtime) if callable(backend) else backend
         file_path = _validate_path(file_path)
-        return backend.read(file_path, offset=offset, limit=limit, runtime=runtime)
+        return resolved_backend.read(file_path, offset=offset, limit=limit)
 
     return read_file
 
 
 def _write_file_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the write_file tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -292,20 +295,21 @@ def _write_file_tool_generator(
         content: str,
         runtime: ToolRuntime[None, FilesystemState],
     ) -> Command | str:
+        resolved_backend = backend(runtime) if callable(backend) else backend
         file_path = _validate_path(file_path)
-        return backend.write(file_path, content, runtime=runtime)
+        return resolved_backend.write(file_path, content)
 
     return write_file
 
 
 def _edit_file_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the edit_file tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -322,20 +326,21 @@ def _edit_file_tool_generator(
         *,
         replace_all: bool = False,
     ) -> Command | str:
+        resolved_backend = backend(runtime) if callable(backend) else backend
         file_path = _validate_path(file_path)
-        return backend.edit(file_path, old_string, new_string, replace_all=replace_all, runtime=runtime)
+        return resolved_backend.edit(file_path, old_string, new_string, replace_all=replace_all)
 
     return edit_file
 
 
 def _glob_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the glob tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -345,19 +350,20 @@ def _glob_tool_generator(
 
     @tool(description=tool_description)
     def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState], path: str = "/") -> list[str]:
-        return backend.glob(pattern, path=path, runtime=runtime)
+        resolved_backend = backend(runtime) if callable(backend) else backend
+        return resolved_backend.glob(pattern, path=path)
 
     return glob
 
 
 def _grep_tool_generator(
-    backend: MemoryBackend,
+    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the grep tool.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_description: Optional custom description for the tool.
 
     Returns:
@@ -370,10 +376,11 @@ def _grep_tool_generator(
         pattern: str,
         runtime: ToolRuntime[None, FilesystemState],
         path: str = "/",
-        include: str | None = None,
+        glob: str | None = None,
         output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
     ) -> str:
-        return backend.grep(pattern, path=path, include=include, output_mode=output_mode, runtime=runtime)
+        resolved_backend = backend(runtime) if callable(backend) else backend
+        return resolved_backend.grep(pattern, path=path, glob=glob, output_mode=output_mode)
 
     return grep
 
@@ -395,7 +402,7 @@ def _get_filesystem_tools(
     """Get filesystem tools.
 
     Args:
-        backend: Backend to use for file storage.
+        backend: Backend to use for file storage, or a factory function that takes runtime and returns a backend.
         custom_tool_descriptions: Optional custom descriptions for tools.
 
     Returns:
@@ -473,8 +480,8 @@ class FilesystemMiddleware(AgentMiddleware):
         """
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
 
-        # Use provided backend or default to StateBackend
-        self.backend = memory_backend if memory_backend is not None else StateBackend()
+        # Use provided backend or default to StateBackend factory
+        self.backend = memory_backend if memory_backend is not None else (lambda runtime: StateBackend(runtime))
 
         # Set system prompt (allow full override)
         self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT

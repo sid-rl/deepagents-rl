@@ -1,6 +1,6 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
-from typing import Any, Literal, Optional, TYPE_CHECKING, runtime_checkable
+from typing import Any, Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
@@ -9,7 +9,6 @@ from deepagents.memory.protocol import MemoryBackend
 from langgraph.types import Command
 
 
-@runtime_checkable
 class CompositeBackend:
     """Backend that routes operations to different backends based on path prefix.
     
@@ -22,16 +21,14 @@ class CompositeBackend:
     
     Example:
         ```python
-        backend = CompositeBackend(
-            default=StateBackend(runtime),
-            routes={"/memories/": FilesystemBackend("/data/memories")}
+        # Create a factory function that returns CompositeBackend with resolved backends
+        backend_factory = lambda runtime: CompositeBackend(
+            default=StateBackend(runtime),  # StateBackend needs runtime
+            routes={"/memories/": FilesystemBackend("/data/memories")}  # FilesystemBackend doesn't
         )
         
-        # Routes to StateBackend
-        backend.get("/temp.txt")
-        
-        # Routes to FilesystemBackend, strips prefix
-        backend.get("/memories/notes.txt")  # → FilesystemBackend.get("/notes.txt")
+        # Then pass this factory to the middleware
+        middleware = FilesystemMiddleware(memory_backend=backend_factory)
         ```
     """
     
@@ -43,9 +40,16 @@ class CompositeBackend:
         """Initialize composite backend with routing rules.
         
         Args:
-            default: Default backend for paths that don't match any route.
-            routes: Dict mapping path prefixes to backends. Keys should include
-                   trailing slash (e.g., "/memories/").
+            default: Default backend for paths that don't match any route (must be resolved backend instance).
+            routes: Dict mapping path prefixes to backends (must be resolved backend instances). 
+                   Keys should include trailing slash (e.g., "/memories/").
+        
+        Note: If you need backends that require runtime (like StateBackend), wrap the CompositeBackend
+        itself in a factory function:
+            lambda runtime: CompositeBackend(
+                default=StateBackend(runtime),
+                routes={"/memories/": FilesystemBackend("./data")}
+            )
         """
         self.default = default
         self.routes = routes
@@ -73,82 +77,71 @@ class CompositeBackend:
         
         return self.default, key
     
-    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def ls(self, path: Optional[str] = None) -> list[str]:
         """List files from all backends, with appropriate prefixes.
         
         Args:
-            prefix: Optional path prefix to filter results.
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            path: Optional path to filter results.Returns:
             List of file paths with route prefixes added.
         """
-        if prefix is None:
+        if path is None:
             # No filter: query all backends and combine results
             result: list[str] = []
             
             # Get all files from default backend
-            result.extend(self.default.ls(None, runtime=runtime))
+            result.extend(self.default.ls(None))
             
             # Get all files from each routed backend, adding route prefix
             for route_prefix, backend in self.routes.items():
-                keys = backend.ls(None, runtime=runtime)
+                keys = backend.ls(None)
                 result.extend(f"{route_prefix[:-1]}{key}" for key in keys)
             
             return result
         else:
-            # Prefix provided: determine which backend(s) to query
+            # Path provided: determine which backend(s) to query
             
-            # Check if prefix matches a specific route
+            # Check if path matches a specific route
             for route_prefix, backend in self.sorted_routes:
-                if prefix.startswith(route_prefix.rstrip("/")):
+                if path.startswith(route_prefix.rstrip("/")):
                     # Query only the matching routed backend
-                    search_prefix = prefix[len(route_prefix) - 1:]
-                    keys = backend.ls(search_prefix if search_prefix != "/" else None, runtime=runtime)
+                    search_path = path[len(route_prefix) - 1:]
+                    keys = backend.ls(search_path if search_path != "/" else None)
                     return [f"{route_prefix[:-1]}{key}" for key in keys]
             
-            # Prefix doesn't match a route: query only default backend
-            return self.default.ls(prefix, runtime=runtime)
+            # Path doesn't match a route: query only default backend
+            return self.default.ls(path)
     
     def read(
         self, 
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content, routing to appropriate backend.
         
         Args:
             file_path: Absolute file path
             offset: Line offset to start reading from (0-indexed)
-            limit: Maximum number of lines to read
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            limit: Maximum number of lines to readReturns:
             Formatted file content with line numbers, or error message.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.read(stripped_key, offset=offset, limit=limit, runtime=runtime)
+        return backend.read(stripped_key, offset=offset, limit=limit)
     
     def write(
         self, 
         file_path: str,
         content: str,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file, routing to appropriate backend.
         
         Args:
             file_path: Absolute file path
-            content: File content as a string
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            content: File content as a stringReturns:
             Success message or Command object, or error if file already exists.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.write(stripped_key, content, runtime=runtime)
+        return backend.write(stripped_key, content)
     
     def edit(
         self, 
@@ -156,7 +149,6 @@ class CompositeBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file, routing to appropriate backend.
         
@@ -164,27 +156,21 @@ class CompositeBackend:
             file_path: Absolute file path
             old_string: String to find and replace
             new_string: Replacement string
-            replace_all: If True, replace all occurrences
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            replace_all: If True, replace all occurrencesReturns:
             Success message or Command object, or error message on failure.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all, runtime=runtime)
+        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
     
-    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
+    def delete(self, file_path: str) -> Command | None:
         """Delete file, routing to appropriate backend.
         
         Args:
-            file_path: File path to delete
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            file_path: File path to deleteReturns:
             Return value from backend (None or Command).
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.delete(stripped_key, runtime=runtime)
+        return backend.delete(stripped_key)
     
     def grep(
         self,
@@ -192,7 +178,6 @@ class CompositeBackend:
         path: str = "/",
         include: Optional[str] = None,
         output_mode: str = "files_with_matches",
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files, routing to appropriate backend(s).
         
@@ -200,16 +185,13 @@ class CompositeBackend:
             pattern: String pattern to search for
             path: Path to search in (default "/")
             include: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"
-            runtime: Optional ToolRuntime for backends that need it.
-        
-        Returns:
+            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
             Formatted search results based on output_mode.
         """
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1:]
-                result = backend.grep(pattern, search_path if search_path else "/", include, output_mode, runtime=runtime)
+                result = backend.grep(pattern, search_path if search_path else "/", include, output_mode)
                 if result.startswith("No matches found"):
                     return result
                 
@@ -227,12 +209,12 @@ class CompositeBackend:
         
         all_results = []
         
-        default_result = self.default.grep(pattern, path, include, output_mode, runtime=runtime)
+        default_result = self.default.grep(pattern, path, glob, output_mode)
         if not default_result.startswith("No matches found"):
             all_results.append(default_result)
         
         for route_prefix, backend in self.routes.items():
-            result = backend.grep(pattern, "/", include, output_mode, runtime=runtime)
+            result = backend.grep(pattern, "/", glob, output_mode)
             if not result.startswith("No matches found"):
                 lines = result.split("\n")
                 prefixed_lines = []
@@ -251,15 +233,12 @@ class CompositeBackend:
         
         return "\n".join(all_results)
     
-    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern across all backends.
 
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")
-            runtime: Optional ToolRuntime for backends that need it.
-
-        Returns:
+            path: Base path to search from (default "/")Returns:
             List of absolute file paths matching the pattern.
         """
         results = []
@@ -269,17 +248,17 @@ class CompositeBackend:
             if path.startswith(route_prefix.rstrip("/")):
                 # Path matches a specific route - search only that backend
                 search_path = path[len(route_prefix) - 1:]
-                matches = backend.glob(pattern, search_path if search_path else "/", runtime=runtime)
+                matches = backend.glob(pattern, search_path if search_path else "/")
                 results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
                 return sorted(results)
 
         # Path doesn't match any specific route - search default backend AND all routed backends
-        default_matches = self.default.glob(pattern, path, runtime=runtime)
+        default_matches = self.default.glob(pattern, path)
         results.extend(default_matches)
 
         # Also search in all routed backends and prefix results
         for route_prefix, backend in self.routes.items():
-            matches = backend.glob(pattern, "/", runtime=runtime)
+            matches = backend.glob(pattern, "/")
             results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
 
         return sorted(results)
