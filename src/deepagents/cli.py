@@ -522,7 +522,7 @@ async def main(assistant_id: str):
     )
 
     # Use the same backend for agent memory middleware
-    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend), shell_middleware]
+    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend, memory_path="/memories/"), shell_middleware]
     system_prompt = f"""### Current Working Directory
 
 The filesystem backend is currently operating in: `{Path.cwd()}`"""

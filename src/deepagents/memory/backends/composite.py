@@ -176,7 +176,7 @@ class CompositeBackend:
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
     ) -> str:
         """Search for a pattern in files, routing to appropriate backend(s).
@@ -184,14 +184,14 @@ class CompositeBackend:
         Args:
             pattern: String pattern to search for
             path: Path to search in (default "/")
-            include: Optional glob pattern to filter files (e.g., "*.py")
+            glob: Optional glob pattern to filter files (e.g., "*.py")
             output_mode: Output format - "files_with_matches", "content", or "count"Returns:
             Formatted search results based on output_mode.
         """
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1:]
-                result = backend.grep(pattern, search_path if search_path else "/", include, output_mode)
+                result = backend.grep(pattern, search_path if search_path else "/", glob, output_mode)
                 if result.startswith("No matches found"):
                     return result
                 
