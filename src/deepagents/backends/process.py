@@ -1,7 +1,7 @@
 """Abstraction for modeling a process."""
 
 import abc
-from typing import NotRequired, TypedDict
+from typing import NotRequired, Optional, TypedDict
 
 
 class ProcessCapabilities(TypedDict):
@@ -24,8 +24,20 @@ class ExecuteResponse(TypedDict):
 
 class Process(abc.ABC):
     @abc.abstractmethod
-    def execute(self, command: str) -> ExecuteResponse:
-        """Execute a command in the process."""
+    def execute(
+        self,
+        command: str,
+        cwd: Optional[str] = None,
+        *,
+        timeout: int = 30 * 60,
+    ) -> ExecuteResponse:
+        """Execute a command in the process.
+
+        Args:
+            command: Command to execute as a string.
+            cwd: Working directory to execute the command in.
+            timeout: Maximum execution time in seconds (default: 30 minutes).
+        """
         ...
 
     @abc.abstractmethod
