@@ -12,6 +12,16 @@ class FileSystemCapabilities(TypedDict):
     """Whether the sandbox can download files."""
     can_list_files: bool
     """Whether the sandbox can list files."""
+    can_read: bool
+    """Whether the sandbox can read file contents."""
+    can_edit: bool
+    """Whether the sandbox can edit files."""
+    can_delete: bool
+    """Whether the sandbox can delete files."""
+    can_grep: bool
+    """Whether the sandbox can search file contents."""
+    can_glob: bool
+    """Whether the sandbox can find files by pattern."""
 
 
 class FileInfo(TypedDict):

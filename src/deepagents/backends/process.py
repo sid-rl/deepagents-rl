@@ -1,9 +1,7 @@
 """Abstraction for modeling a process."""
 
 import abc
-from typing import NotRequired
-
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class ProcessCapabilities(TypedDict):
@@ -28,7 +26,7 @@ class Process(abc.ABC):
     @abc.abstractmethod
     def execute(self, command: str) -> ExecuteResponse:
         """Execute a command in the process."""
-        pass
+        ...
 
     @abc.abstractmethod
     def get_capabilities(self) -> ProcessCapabilities: ...
