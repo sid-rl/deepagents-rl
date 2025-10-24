@@ -238,9 +238,9 @@ class FilesystemBackend:
         regex = re.compile(re.escape(pattern))
         
         if glob:
-            files_to_search = self.glob(glob, runtime=runtime)
+            files_to_search = self.glob(glob)
         else:
-            files_to_search = self.ls(path if path != "/" else None, runtime=runtime)
+            files_to_search = self.ls(path if path != "/" else None)
         
         if path != "/":
             files_to_search = [f for f in files_to_search if f.startswith(path)]
