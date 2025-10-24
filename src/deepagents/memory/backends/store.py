@@ -16,6 +16,7 @@ from deepagents.memory.backends.utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
+    truncate_if_too_long,
     _glob_search_files,
     _grep_search_files,
 )
@@ -124,11 +125,11 @@ class StoreBackend:
         """
         store = self._get_store(runtime)
         namespace = self._get_namespace()
-        
+
         # Search store with optional prefix filter
         items = store.search(namespace, filter={"prefix": prefix} if prefix else None)
-        
-        return [item.key for item in items]
+
+        return truncate_if_too_long([item.key for item in items])
     
     def read(
         self, 
@@ -279,9 +280,9 @@ class StoreBackend:
         """
         store = self._get_store(runtime)
         namespace = self._get_namespace()
-        
+
         items = store.search(namespace)
-        
+
         files = {}
         for item in items:
             if item is None:
@@ -291,8 +292,8 @@ class StoreBackend:
                 files[item.key] = file_data
             except ValueError:
                 continue
-        
-        return _grep_search_files(files, pattern, path, include, output_mode)
+
+        return truncate_if_too_long(_grep_search_files(files, pattern, path, include, output_mode))
     
     def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
@@ -307,9 +308,9 @@ class StoreBackend:
         """
         store = self._get_store(runtime)
         namespace = self._get_namespace()
-        
+
         items = store.search(namespace)
-        
+
         files = {}
         for item in items:
             if item is None:
@@ -319,8 +320,8 @@ class StoreBackend:
                 files[item.key] = file_data
             except ValueError:
                 continue
-        
+
         result = _glob_search_files(files, pattern, path)
         if result == "No files found":
             return []
-        return result.split("\n")
+        return truncate_if_too_long(result.split("\n"))

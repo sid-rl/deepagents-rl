@@ -9,6 +9,8 @@ from typing import Any, Literal
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
+TOOL_RESULT_TOKEN_LIMIT = 20000  # Same threshold as eviction
+TRUNCATION_GUIDANCE = "... [results truncated, try being more specific with your parameters]"
 
 
 def format_content_with_line_numbers(
@@ -161,6 +163,19 @@ def perform_string_replacement(
     
     new_content = content.replace(old_string, new_string)
     return new_content, occurrences
+
+
+def truncate_if_too_long(result: list[str] | str) -> list[str] | str:
+    """Truncate list or string result if it exceeds token limit (rough estimate: 4 chars/token)."""
+    if isinstance(result, list):
+        total_chars = sum(len(item) for item in result)
+        if total_chars > TOOL_RESULT_TOKEN_LIMIT * 4:
+            return result[: len(result) * TOOL_RESULT_TOKEN_LIMIT * 4 // total_chars] + [TRUNCATION_GUIDANCE]
+        return result
+    else:  # string
+        if len(result) > TOOL_RESULT_TOKEN_LIMIT * 4:
+            return result[: TOOL_RESULT_TOKEN_LIMIT * 4] + "\n" + TRUNCATION_GUIDANCE
+        return result
 
 
 def _validate_path(path: str) -> str:

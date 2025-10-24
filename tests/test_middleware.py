@@ -17,7 +17,6 @@ from deepagents.middleware.filesystem import (
     FileData,
     FilesystemMiddleware,
     FilesystemState,
-    _search_store_paginated,
 )
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
@@ -785,3 +784,45 @@ class TestPatchToolCallsMiddleware:
         assert updated_messages[6].tool_call_id == "456"
         assert updated_messages[6].name == "get_events_for_days"
         assert updated_messages[7] == input_messages[5]
+
+
+class TestTruncation:
+    def test_truncate_list_result_no_truncation(self):
+        from deepagents.memory.backends.utils import truncate_if_too_long
+
+        items = ["/file1.py", "/file2.py", "/file3.py"]
+        result = truncate_if_too_long(items)
+        assert result == items
+
+    def test_truncate_list_result_with_truncation(self):
+        from deepagents.memory.backends.utils import truncate_if_too_long
+
+        # Create a list that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
+        large_items = [f"/very_long_file_path_{'x' * 100}_{i}.py" for i in range(1000)]
+        result = truncate_if_too_long(large_items)
+
+        # Should be truncated
+        assert len(result) < len(large_items)
+        # Last item should be the truncation message
+        assert "results truncated" in result[-1]
+        assert "try being more specific" in result[-1]
+
+    def test_truncate_string_result_no_truncation(self):
+        from deepagents.memory.backends.utils import truncate_if_too_long
+
+        content = "short content"
+        result = truncate_if_too_long(content)
+        assert result == content
+
+    def test_truncate_string_result_with_truncation(self):
+        from deepagents.memory.backends.utils import truncate_if_too_long
+
+        # Create string that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
+        large_content = "x" * 100000
+        result = truncate_if_too_long(large_content)
+
+        # Should be truncated
+        assert len(result) < len(large_content)
+        # Should end with truncation message
+        assert "results truncated" in result
+        assert "try being more specific" in result

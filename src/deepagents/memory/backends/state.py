@@ -15,6 +15,7 @@ from .utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
+    truncate_if_too_long,
     _glob_search_files,
     _grep_search_files,
 )
@@ -48,11 +49,11 @@ class StateBackend:
             raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
         keys = list(files.keys())
-        
+
         if prefix is not None:
             keys = [k for k in keys if k.startswith(prefix)]
-        
-        return keys
+
+        return truncate_if_too_long(keys)
     
     def read(
         self, 
@@ -218,8 +219,8 @@ class StateBackend:
         if runtime is None:
             raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
-        
-        return _grep_search_files(files, pattern, path, include, output_mode)
+
+        return truncate_if_too_long(_grep_search_files(files, pattern, path, include, output_mode))
     
     def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
         """Find files matching a glob pattern.
@@ -235,8 +236,8 @@ class StateBackend:
         if runtime is None:
             raise ValueError("StateBackend requires runtime parameter")
         files = runtime.state.get("files", {})
-        
+
         result = _glob_search_files(files, pattern, path)
         if result == "No files found":
             return []
-        return result.split("\n")
+        return truncate_if_too_long(result.split("\n"))
