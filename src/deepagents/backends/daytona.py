@@ -149,6 +149,8 @@ class DaytonaFileSystem(FileSystem):
             grep_opts += "l"  # files with matches
         elif output_mode == "count":
             grep_opts += "c"  # count per file
+        elif output_mode == "content":
+            grep_opts += "Hn"
 
         # Add include pattern if specified
         include_pattern = ""
