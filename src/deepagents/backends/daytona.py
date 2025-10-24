@@ -130,9 +130,7 @@ class DaytonaFileSystem(FileSystem):
 
     def delete(self, file_path: str) -> None:
         """Delete a file by path."""
-        # Daytona doesn't have a direct delete method in the reference,
-        # we would need to use exec or the filesystem API
-        raise NotImplementedError("Delete not yet implemented for Daytona backend")
+        return self._sandbox.fs.delete_file(file_path)
 
     def grep(
         self,
