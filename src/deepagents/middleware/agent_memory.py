@@ -102,6 +102,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
         self,
         *,
         backend: MemoryBackend,
+        memory_path: str,
         system_prompt_template: str | None = None,
     ) -> None:
         """Initialize the agent memory middleware.
@@ -112,6 +113,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
                 agent memory into system prompt.
         """
         self.backend = backend
+        self.memory_path = memory_path
         self.system_prompt_template = system_prompt_template or DEFAULT_MEMORY_SNIPPET
 
     def before_agent(
@@ -149,11 +151,8 @@ class AgentMemoryMiddleware(AgentMiddleware):
         """
         # Only load memory if it hasn't been loaded yet
         if "agent_memory" not in state or state.get("agent_memory") is None:
-            file_data = self.backend.get(AGENT_MEMORY_FILE_PATH)
-            if file_data:
-                content = file_data.get("content", [])
-                agent_memory = "\n".join(content)
-                return {"agent_memory": agent_memory}
+            file_data = self.backend.read(AGENT_MEMORY_FILE_PATH)
+            return {"agent_memory": file_data}
 
     def wrap_model_call(
         self,
@@ -177,7 +176,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
             request.system_prompt = memory_section + "\n\n" + request.system_prompt
         else:
             request.system_prompt = memory_section
-        request.system_prompt = request.system_prompt + "\n\n" + LONGTERM_MEMORY_SYSTEM_PROMPT
+        request.system_prompt = request.system_prompt + "\n\n" + LONGTERM_MEMORY_SYSTEM_PROMPT.format(memory_path=self.memory_path)
 
         return handler(request)
 
@@ -203,6 +202,6 @@ class AgentMemoryMiddleware(AgentMiddleware):
             request.system_prompt = memory_section + "\n\n" + request.system_prompt
         else:
             request.system_prompt = memory_section
-        request.system_prompt = request.system_prompt + "\n\n" + LONGTERM_MEMORY_SYSTEM_PROMPT
+        request.system_prompt = request.system_prompt + "\n\n" + LONGTERM_MEMORY_SYSTEM_PROMPT.format(memory_path=self.memory_path)
 
         return await handler(request)

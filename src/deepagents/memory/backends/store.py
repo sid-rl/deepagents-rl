@@ -30,23 +30,23 @@ class StoreBackend:
     
     The namespace can include an optional assistant_id for multi-agent isolation.
     """
+    def __init__(self, runtime: "ToolRuntime"):
+        """Initialize StoreBackend with runtime.
+        
+        Args:"""
+        self.runtime = runtime
 
-    def _get_store(self, runtime: Optional["ToolRuntime"] = None) -> BaseStore:
+
+    def _get_store(self) -> BaseStore:
         """Get the store instance.
         
-        Args:
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+        Args:Returns:
             BaseStore instance
         
         Raises:
             ValueError: If no store is available or runtime not provided
         """
-        if runtime is None:
-            msg = "StoreBackend requires runtime parameter"
-            raise ValueError(msg)
-        store = runtime.store
+        store = self.runtime.store
         if store is None:
             msg = "Store is required but not available in runtime"
             raise ValueError(msg)
@@ -112,23 +112,69 @@ class StoreBackend:
             "created_at": file_data["created_at"],
             "modified_at": file_data["modified_at"],
         }
+
+    def _search_store_paginated(
+        self,
+        store: BaseStore,
+        namespace: tuple[str, ...],
+        *,
+        query: str | None = None,
+        filter: dict[str, Any] | None = None,
+        page_size: int = 100,
+    ) -> list[Item]:
+        """Search store with automatic pagination to retrieve all results.
+
+        Args:
+            store: The store to search.
+            namespace: Hierarchical path prefix to search within.
+            query: Optional query for natural language search.
+            filter: Key-value pairs to filter results.
+            page_size: Number of items to fetch per page (default: 100).
+
+        Returns:
+            List of all items matching the search criteria.
+
+        Example:
+            ```python
+            store = _get_store(runtime)
+            namespace = _get_namespace()
+            all_items = _search_store_paginated(store, namespace)
+            ```
+        """
+        all_items: list[Item] = []
+        offset = 0
+        while True:
+            page_items = store.search(
+                namespace,
+                query=query,
+                filter=filter,
+                limit=page_size,
+                offset=offset,
+            )
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < page_size:
+                break
+            offset += page_size
+
+        return all_items
     
-    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def ls(self, path: str) -> list[str]:
         """List files from store.
         
         Args:
-            prefix: Optional path prefix to filter results.
-            runtime: ToolRuntime to access store.
+            path: Absolute path to directory.
         
         Returns:
             List of file paths.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
-
-        # Search store with optional prefix filter
-        items = store.search(namespace, filter={"prefix": prefix} if prefix else None)
-
+        
+        # Search store with path filter
+        items = self._search_store_paginated(store, namespace, filter={"prefix": path})
+        
         return truncate_if_too_long([item.key for item in items])
     
     def read(
@@ -136,20 +182,17 @@ class StoreBackend:
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content with line numbers.
         
         Args:
             file_path: Absolute file path
-            offset: Line offset to start reading from (0-indexed)
-            runtime: ToolRuntime to access store.
-            limit: Maximum number of lines to read
+            offset: Line offset to start reading from (0-indexed)limit: Maximum number of lines to read
         
         Returns:
             Formatted file content with line numbers, or error message.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
         item: Optional[Item] = store.get(namespace, file_path)
         
@@ -167,19 +210,15 @@ class StoreBackend:
         self, 
         file_path: str,
         content: str,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file with content.
         
         Args:
             file_path: Absolute file path
-            content: File content as a string
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+            content: File content as a stringReturns:
             Success message or error if file already exists.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
         
         # Check if file exists
@@ -200,7 +239,6 @@ class StoreBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
         
@@ -208,13 +246,10 @@ class StoreBackend:
             file_path: Absolute file path
             old_string: String to find and replace
             new_string: Replacement string
-            replace_all: If True, replace all occurrences
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+            replace_all: If True, replace all occurrencesReturns:
             Success message or error message on failure.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
         
         # Get existing file
@@ -242,17 +277,14 @@ class StoreBackend:
         
         return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
     
-    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
+    def delete(self, file_path: str) -> Command | None:
         """Delete file from store.
         
         Args:
-            file_path: File path to delete
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+            file_path: File path to deleteReturns:
             None (direct store modification)
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
         store.delete(namespace, file_path)
         
@@ -262,27 +294,23 @@ class StoreBackend:
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files.
         
         Args:
             pattern: String pattern to search for
             path: Path to search in (default "/")
-            include: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+            glob: Optional glob pattern to filter files (e.g., "*.py")
+            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
             Formatted search results based on output_mode.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
-
-        items = store.search(namespace)
-
+        
+        items = self._search_store_paginated(store, namespace)
+        
         files = {}
         for item in items:
             if item is None:
@@ -292,25 +320,22 @@ class StoreBackend:
                 files[item.key] = file_data
             except ValueError:
                 continue
-
-        return truncate_if_too_long(_grep_search_files(files, pattern, path, include, output_mode))
+        
+        return truncate_if_too_long(_grep_search_files(files, pattern, path, glob, output_mode))
     
-    def glob(self, pattern: str, path: str = "/", runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.
         
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")
-            runtime: ToolRuntime to access store.
-        
-        Returns:
+            path: Base path to search from (default "/")Returns:
             List of absolute file paths matching the pattern.
         """
-        store = self._get_store(runtime)
+        store = self._get_store()
         namespace = self._get_namespace()
-
-        items = store.search(namespace)
-
+        
+        items = self._search_store_paginated(store, namespace)
+        
         files = {}
         for item in items:
             if item is None:

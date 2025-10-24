@@ -27,16 +27,14 @@ class MemoryBackend(Protocol):
     }
     """
     
-    def ls(self, prefix: Optional[str] = None, runtime: Optional["ToolRuntime"] = None) -> list[str]:
-        """List all file paths, optionally filtered by prefix.
+    def ls(self, path: str) -> list[str]:
+        """List all file paths in a directory.
         
         Args:
-            prefix: Optional path prefix to filter results (e.g., "/subdir/", "/memories/")
-                   If None, returns all files.
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
+            path: Absolute path to directory (e.g., "/", "/subdir/", "/memories/")
         
         Returns:
-            List of absolute file paths matching the prefix.
+            List of absolute file paths in the specified directory.
         """
         ...
     
@@ -45,7 +43,6 @@ class MemoryBackend(Protocol):
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Read file content with line numbers.
         
@@ -53,7 +50,6 @@ class MemoryBackend(Protocol):
             file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
             offset: Line offset to start reading from (0-indexed)
             limit: Maximum number of lines to read
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
         
         Returns:
             Formatted file content with line numbers (cat -n style), or error message.
@@ -66,14 +62,12 @@ class MemoryBackend(Protocol):
         self, 
         file_path: str,
         content: str,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Create a new file with content.
         
         Args:
             file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
             content: File content as a string
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
         
         Returns:
             - Command object for StateBackend (uses_state=True) to update LangGraph state
@@ -90,7 +84,6 @@ class MemoryBackend(Protocol):
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-        runtime: Optional["ToolRuntime"] = None,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
         
@@ -99,7 +92,6 @@ class MemoryBackend(Protocol):
             old_string: String to find and replace
             new_string: Replacement string
             replace_all: If True, replace all occurrences; if False, require unique match
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
         
         Returns:
             - Command object for StateBackend (uses_state=True) to update LangGraph state
@@ -113,12 +105,11 @@ class MemoryBackend(Protocol):
         """
         ...
     
-    def delete(self, file_path: str, runtime: Optional["ToolRuntime"] = None) -> Command | None:
+    def delete(self, file_path: str) -> Command | None:
         """Delete a file by path.
         
         Args:
             file_path: Absolute file path to delete
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
         
         Returns:
             - None for backends that modify storage directly (uses_state=False)
@@ -130,34 +121,43 @@ class MemoryBackend(Protocol):
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
-        runtime: Optional["ToolRuntime"] = None,
     ) -> str:
         """Search for a pattern in files.
         
+        TODO: This implementation is significantly less capable than Claude Code's Grep tool.
+        Missing features to add in the future:
+        - Context lines: -A (after), -B (before), -C (context) parameters
+        - Line numbers: -n parameter to show line numbers in output
+        - Case sensitivity: -i parameter for case-insensitive search
+        - Output limiting: head_limit parameter for large result sets
+        - File type filter: type parameter (e.g., "py", "js")
+        - Multiline support: multiline parameter for cross-line pattern matching
+        - Pattern semantics: Clarify if pattern is regex or literal string
+        See /memories/memory_backend_vs_claude_code_comparison.md for full details.
+        
         Args:
-            pattern: String pattern to search for
+            pattern: String pattern to search for (currently literal string)
             path: Path to search in (default "/")
-            include: Optional glob pattern to filter files (e.g., "*.py")
+            glob: Optional glob pattern to filter files (e.g., "*.py")
             output_mode: Output format - "files_with_matches", "content", or "count"
                 - files_with_matches: List file paths that contain matches
                 - content: Show matching lines with file paths and line numbers
                 - count: Show count of matches per file
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
         
         Returns:
             Formatted search results based on output_mode, or message if no matches found.
         """
         ...
     
-    def glob(self, pattern: str, runtime: Optional["ToolRuntime"] = None) -> list[str]:
+    def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.
-        
+
         Args:
             pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
-        
+            path: Base path to search from (default: "/")
+
         Returns:
             List of absolute file paths matching the pattern.
         """

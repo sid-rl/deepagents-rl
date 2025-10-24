@@ -76,6 +76,7 @@ def create_file_data(content: str, created_at: str | None = None) -> dict[str, A
         FileData dict with content and timestamps
     """
     lines = content.split("\n") if isinstance(content, str) else content
+    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
     now = datetime.now(UTC).isoformat()
     
     return {
@@ -96,6 +97,7 @@ def update_file_data(file_data: dict[str, Any], content: str) -> dict[str, Any]:
         Updated FileData dict
     """
     lines = content.split("\n") if isinstance(content, str) else content
+    lines = [line[i:i+MAX_LINE_LENGTH] for line in lines for i in range(0, len(line) or 1, MAX_LINE_LENGTH)]
     now = datetime.now(UTC).isoformat()
     
     return {
@@ -282,7 +284,7 @@ def _grep_search_files(
     files: dict[str, Any],
     pattern: str,
     path: str = "/",
-    include: str | None = None,
+    glob: str | None = None,
     output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
 ) -> str:
     """Search file contents for regex pattern.
@@ -291,7 +293,7 @@ def _grep_search_files(
         files: Dictionary of file paths to FileData.
         pattern: Regex pattern to search for.
         path: Base path to search from.
-        include: Optional glob pattern to filter files (e.g., "*.py").
+        glob: Optional glob pattern to filter files (e.g., "*.py").
         output_mode: Output format - "files_with_matches", "content", or "count".
     
     Returns:
@@ -316,8 +318,8 @@ def _grep_search_files(
 
     filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
 
-    if include:
-        filtered = {fp: fd for fp, fd in filtered.items() if wcglob.globmatch(Path(fp).name, include, flags=wcglob.BRACE)}
+    if glob:
+        filtered = {fp: fd for fp, fd in filtered.items() if wcglob.globmatch(Path(fp).name, glob, flags=wcglob.BRACE)}
 
     results: dict[str, list[tuple[int, str]]] = {}
     for file_path, file_data in filtered.items():

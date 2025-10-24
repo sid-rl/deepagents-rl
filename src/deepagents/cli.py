@@ -16,7 +16,9 @@ from langchain.agents.middleware import ShellToolMiddleware, HostExecutionPolicy
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.spinner import Spinner
 from deepagents.memory.backends.filesystem import FilesystemBackend
+from deepagents.memory.backends import CompositeBackend
 from deepagents.middleware.agent_memory import AgentMemoryMiddleware
 from pathlib import Path
 import shutil
@@ -25,6 +27,31 @@ from rich import box
 import dotenv
 
 dotenv.load_dotenv()
+
+COLORS = {
+    "primary": "#10b981",
+    "dim": "#6b7280",
+    "user": "#ffffff",
+    "agent": "#10b981",
+    "thinking": "#34d399",
+    "tool": "#fbbf24",
+}
+
+DEEP_AGENTS_ASCII = """
+ ██████╗  ███████╗ ███████╗ ██████╗
+ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗
+ ██║  ██║ █████╗   █████╗   ██████╔╝
+ ██║  ██║ ██╔══╝   ██╔══╝   ██╔═══╝
+ ██████╔╝ ███████╗ ███████╗ ██║
+ ╚═════╝  ╚══════╝ ╚══════╝ ╚═╝
+
+  █████╗   ██████╗  ███████╗ ███╗   ██╗ ████████╗ ███████╗
+ ██╔══██╗ ██╔════╝  ██╔════╝ ████╗  ██║ ╚══██╔══╝ ██╔════╝
+ ███████║ ██║  ███╗ █████╗   ██╔██╗ ██║    ██║    ███████╗
+ ██╔══██║ ██║   ██║ ██╔══╝   ██║╚██╗██║    ██║    ╚════██║
+ ██║  ██║ ╚██████╔╝ ███████╗ ██║ ╚████║    ██║    ███████║
+ ╚═╝  ╚═╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝    ╚═╝    ╚══════╝
+"""
 
 console = Console()
 
@@ -147,9 +174,7 @@ def get_default_coding_instructions() -> str:
 
 config = {"recursion_limit": 1000}
 
-# Constants for display truncation
-MAX_ARG_LENGTH = 200
-MAX_RESULT_LENGTH = 200
+MAX_ARG_LENGTH = 150
 
 
 def truncate_value(value: str, max_length: int = MAX_ARG_LENGTH) -> str:
@@ -159,22 +184,22 @@ def truncate_value(value: str, max_length: int = MAX_ARG_LENGTH) -> str:
     return value
 
 
-def format_tool_args(tool_input: dict) -> str:
-    """Format tool arguments for display, truncating long values."""
-    if not tool_input:
-        return ""
+def execute_task(user_input: str, agent, assistant_id: str | None):
+    """Execute any task by passing it directly to the AI agent."""
+    console.print()
     
-    args_parts = []
-    for key, value in tool_input.items():
-        value_str = str(value)
-        value_str = truncate_value(value_str)
-        args_parts.append(f"{key}={value_str}")
+    config = {
+        "configurable": {"thread_id": "main"},
+        "metadata": {"assistant_id": assistant_id} if assistant_id else {}
+    }
     
-    return ", ".join(args_parts)
-
-
-def display_tool_call(tool_name: str, tool_input: dict):
-    """Display a tool call with arguments, truncating long values."""
+    has_responded = False
+    current_text = ""
+    printed_tool_calls_after_text = False
+    
+    status = console.status(f"[bold {COLORS['thinking']}]Agent is thinking...", spinner="dots")
+    status.start()
+    spinner_active = True
     
     tool_icons = {
         "read_file": "📖",
@@ -190,55 +215,6 @@ def display_tool_call(tool_name: str, tool_input: dict):
         "write_todos": "📋",
     }
     
-    icon = tool_icons.get(tool_name, "🔧")
-    args_str = format_tool_args(tool_input)
-    
-    # Display: icon tool_name(args)
-    if args_str:
-        console.print(f"[dim]{icon} {tool_name}({args_str})[/dim]")
-    else:
-        console.print(f"[dim]{icon} {tool_name}()[/dim]")
-
-
-def display_text_content(text: str):
-    """Display text content with markdown rendering."""
-    if text.strip():
-        if "```" in text or "#" in text or "**" in text:
-            md = Markdown(text)
-            console.print(md)
-        else:
-            console.print(text, style="white")
-
-
-def extract_and_display_content(message_content):
-    """Extract content from agent messages and display with rich formatting."""
-    if isinstance(message_content, str):
-        display_text_content(message_content)
-        return
-
-    if isinstance(message_content, list):
-        for block in message_content:
-            if isinstance(block, dict):
-                if block.get("type") == "text" and "text" in block:
-                    display_text_content(block["text"])
-                elif block.get("type") == "tool_use":
-                    tool_name = block.get("name", "unknown_tool")
-                    tool_input = block.get("input", {})
-                    display_tool_call(tool_name, tool_input)
-                # Skip tool_result blocks - they're just noise
-                elif block.get("type") == "tool_result":
-                    pass  # Don't display tool results
-
-
-def execute_task(user_input: str, agent, assistant_id: str | None):
-    """Execute any task by passing it directly to the AI agent."""
-    console.print()
-    
-    config = {
-        "configurable": {"thread_id": "main"},
-        "metadata": {"assistant_id": assistant_id} if assistant_id else {}
-    }
-    
     for _, chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
         stream_mode="updates",
@@ -246,118 +222,144 @@ def execute_task(user_input: str, agent, assistant_id: str | None):
         config=config,
         durability="exit",
     ):
-        chunk = list(chunk.values())[0]
-        if chunk is not None:
-            # Check for interrupts
-            if "__interrupt__" in chunk:
-                result = chunk
-                break
+        chunk_data = list(chunk.values())[0]
+        if not chunk_data or "messages" not in chunk_data:
+            continue
+        
+        last_message = chunk_data["messages"][-1]
+        message_role = getattr(last_message, "type", None)
+        message_content = getattr(last_message, "content", None)
+        
+        # Skip tool results
+        if message_role == "tool":
+            continue
+        
+        # Handle AI messages
+        if message_role == "ai":
+            # First, extract and display text content
+            text_content = ""
             
-            # Normal message processing
-            if "messages" in chunk and chunk["messages"]:
-                last_message = chunk["messages"][-1]
-
-                message_content = None
-                message_role = getattr(last_message, "type", None)
-                if isinstance(message_role, dict):
-                    message_role = last_message.get("role", "unknown")
-
-                if hasattr(last_message, "content"):
-                    message_content = last_message.content
-                elif isinstance(last_message, dict) and "content" in last_message:
-                    message_content = last_message["content"]
-
-                if message_content:
-                    # Show tool calls with truncated args
-                    if message_role != "tool":
-                        if isinstance(message_content, list):
-                            for block in message_content:
-                                if isinstance(block, dict) and block.get("type") == "tool_use":
-                                    tool_name = block.get("name", "unknown_tool")
-                                    tool_input = block.get("input", {})
-                                    
-                                    tool_icons = {
-                                        "read_file": "📖",
-                                        "write_file": "✏️",
-                                        "edit_file": "✂️",
-                                        "ls": "📁",
-                                        "glob": "🔍",
-                                        "grep": "🔎",
-                                        "shell": "⚡",
-                                        "web_search": "🌐",
-                                        "http_request": "🌍",
-                                        "task": "🤖",
-                                        "write_todos": "📋",
-                                    }
-                                    
-                                    icon = tool_icons.get(tool_name, "🔧")
-                                    args_str = format_tool_args(tool_input)
-                                    
-                                    if args_str:
-                                        console.print(f"[dim]{icon} {tool_name}({args_str})[/dim]")
-                                    else:
-                                        console.print(f"[dim]{icon} {tool_name}()[/dim]")
+            if isinstance(message_content, str):
+                text_content = message_content
+            elif isinstance(message_content, list):
+                for block in message_content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_content = block.get("text", "")
+                        break
+            
+            if text_content.strip():
+                if spinner_active:
+                    status.stop()
+                    spinner_active = False
+                
+                if not has_responded:
+                    console.print("... ", style=COLORS["agent"], end="", markup=False)
+                    has_responded = True
+                    printed_tool_calls_after_text = False
+                
+                if text_content != current_text:
+                    new_text = text_content[len(current_text):]
+                    console.print(new_text, style=COLORS["agent"], end="", markup=False)
+                    current_text = text_content
+                    printed_tool_calls_after_text = False
+            
+            # Then, handle tool calls from tool_calls attribute
+            tool_calls = getattr(last_message, "tool_calls", None)
+            if tool_calls:
+                # If we've printed text, ensure tool calls go on new line
+                if has_responded and current_text and not printed_tool_calls_after_text:
+                    console.print()
+                    printed_tool_calls_after_text = True
+                
+                for tool_call in tool_calls:
+                    tool_name = tool_call.get("name", "unknown")
+                    tool_args = tool_call.get("args", {})
                     
-                    # Show tool results with truncation
-                    if message_role == "tool":
-                        result_str = str(message_content)
-                        result_str = truncate_value(result_str, MAX_RESULT_LENGTH)
-                        console.print(f"[dim]  → {result_str}[/dim]")
+                    icon = tool_icons.get(tool_name, "🔧")
+                    args_str = ", ".join(
+                        f"{k}={truncate_value(str(v), 50)}" for k, v in tool_args.items()
+                    )
                     
-                    # Show text content
-                    if message_role != "tool":
-                        has_text_content = False
-                        if isinstance(message_content, str):
-                            has_text_content = True
-                        elif isinstance(message_content, list):
-                            for block in message_content:
-                                if isinstance(block, dict):
-                                    if block.get("type") == "text" and block.get("text", "").strip():
-                                        has_text_content = True
-                                        break
-                        
-                        if has_text_content:
-                            extract_and_display_content(message_content)
-                            console.print()
+                    if spinner_active:
+                        status.stop()
+                    console.print(f"  {icon} {tool_name}({args_str})", style=f"dim {COLORS['tool']}")
+                    if spinner_active:
+                        status.start()
+            
+            # Handle tool calls from content blocks (alternative format) - only if not already handled
+            elif isinstance(message_content, list):
+                has_tool_use = False
+                for block in message_content:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        has_tool_use = True
+                        break
+                
+                if has_tool_use:
+                    # If we've printed text, ensure tool calls go on new line
+                    if has_responded and current_text and not printed_tool_calls_after_text:
+                        console.print()
+                        printed_tool_calls_after_text = True
+                    
+                    for block in message_content:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            
+                            icon = tool_icons.get(tool_name, "🔧")
+                            args = ", ".join(
+                                f"{k}={truncate_value(str(v), 50)}" for k, v in tool_input.items()
+                            )
+                            
+                            if spinner_active:
+                                status.stop()
+                            console.print(f"  {icon} {tool_name}({args})", style=f"dim {COLORS['tool']}")
+                            if spinner_active:
+                                status.start()
     
-    console.print()
+    if spinner_active:
+        status.stop()
+    
+    if has_responded:
+        console.print()
+        console.print()
 
 
 async def simple_cli(agent, assistant_id: str | None):
     """Main CLI loop."""
+    console.clear()
+    console.print(DEEP_AGENTS_ASCII, style=f"bold {COLORS['primary']}")
     console.print()
-    console.print(Panel.fit(
-        "[bold cyan]DeepAgents[/bold cyan] [dim]|[/dim] AI Coding Assistant",
-        border_style="cyan",
-        box=box.DOUBLE
-    ))
-    console.print("[dim]Type 'quit' to exit[/dim]")
     
     if tavily_client is None:
-        console.print("[yellow]⚠ Web search disabled:[/yellow] TAVILY_API_KEY not found.")
-        console.print("[dim]  To enable web search, set your Tavily API key:[/dim]")
-        console.print("[dim]    export TAVILY_API_KEY=your_api_key_here[/dim]")
-        console.print("[dim]  Or add it to your .env file. Get your key at: https://tavily.com[/dim]")
+        console.print(f"[yellow]⚠ Web search disabled:[/yellow] TAVILY_API_KEY not found.", style=COLORS["dim"])
+        console.print(f"  To enable web search, set your Tavily API key:", style=COLORS["dim"])
+        console.print(f"    export TAVILY_API_KEY=your_api_key_here", style=COLORS["dim"])
+        console.print(f"  Or add it to your .env file. Get your key at: https://tavily.com", style=COLORS["dim"])
+        console.print()
     
+    console.print("... Ready to code! What would you like to build?", style=COLORS["agent"])
+    console.print()
+    console.print(f"  Tip: Type 'quit' to exit", style=f"dim {COLORS['dim']}")
     console.print()
 
     while True:
         try:
-            console.print("[bold green]❯[/bold green] ", end="")
+            console.print(f"> ", style=COLORS["user"], end="")
             user_input = input().strip()
         except EOFError:
+            break
+        except KeyboardInterrupt:
+            console.print()
             break
 
         if not user_input:
             continue
 
         if user_input.lower() in ["quit", "exit", "q"]:
-            console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
+            console.print(f"\nGoodbye!", style=COLORS["primary"])
             break
 
-        else:
-            console.print("[dim]✓ Command sent[/dim]")
-            execute_task(user_input, agent, assistant_id)
+        execute_task(user_input, agent, assistant_id)
 
 
 def list_agents():
@@ -366,10 +368,10 @@ def list_agents():
     
     if not agents_dir.exists() or not any(agents_dir.iterdir()):
         console.print("[yellow]No agents found.[/yellow]")
-        console.print("[dim]Agents will be created in ~/.deepagents/ when you first use them.[/dim]")
+        console.print(f"[dim]Agents will be created in ~/.deepagents/ when you first use them.[/dim]", style=COLORS["dim"])
         return
     
-    console.print("\n[bold cyan]Available Agents:[/bold cyan]\n")
+    console.print(f"\n[bold]Available Agents:[/bold]\n", style=COLORS["primary"])
     
     for agent_path in sorted(agents_dir.iterdir()):
         if agent_path.is_dir():
@@ -377,11 +379,11 @@ def list_agents():
             agent_md = agent_path / "agent.md"
             
             if agent_md.exists():
-                console.print(f"  [green]•[/green] [bold]{agent_name}[/bold]")
-                console.print(f"    [dim]{agent_path}[/dim]")
+                console.print(f"  • [bold]{agent_name}[/bold]", style=COLORS["primary"])
+                console.print(f"    {agent_path}", style=COLORS["dim"])
             else:
-                console.print(f"  [yellow]•[/yellow] [bold]{agent_name}[/bold] [dim](incomplete)[/dim]")
-                console.print(f"    [dim]{agent_path}[/dim]")
+                console.print(f"  • [bold]{agent_name}[/bold] [dim](incomplete)[/dim]", style=COLORS["tool"])
+                console.print(f"    {agent_path}", style=COLORS["dim"])
     
     console.print()
 
@@ -402,60 +404,58 @@ def reset_agent(agent_name: str, source_agent: str = None):
         source_content = source_md.read_text()
         action_desc = f"contents of agent '{source_agent}'"
     else:
-        # Reset to empty - agent builds their own memory
         source_content = get_default_coding_instructions()
         action_desc = "default"
     
     if agent_dir.exists():
         shutil.rmtree(agent_dir)
-        console.print(f"[yellow]Removed existing agent directory:[/yellow] {agent_dir}")
+        console.print(f"Removed existing agent directory: {agent_dir}", style=COLORS["tool"])
     
     agent_dir.mkdir(parents=True, exist_ok=True)
     agent_md = agent_dir / "agent.md"
     agent_md.write_text(source_content)
     
-    console.print(f"[bold green]✓[/bold green] Agent '{agent_name}' reset to {action_desc}")
-    console.print(f"[dim]Location: {agent_dir}[/dim]\n")
+    console.print(f"✓ Agent '{agent_name}' reset to {action_desc}", style=COLORS["primary"])
+    console.print(f"Location: {agent_dir}\n", style=COLORS["dim"])
 
 
 def show_help():
     """Show help information."""
-    help_text = """
-[bold cyan]DeepAgents - AI Coding Assistant[/bold cyan]
-
-[bold]Usage:[/bold]
-  deepagents [--agent NAME] [--no-memory]    Start interactive session
-  deepagents list                            List all available agents
-  deepagents reset --agent AGENT             Reset agent to default prompt
-  deepagents reset --agent AGENT --target SOURCE   Reset agent to copy of another agent
-  deepagents help                            Show this help message
-
-[bold]Examples:[/bold]
-  deepagents                          # Start with default agent (long-term memory enabled)
-  deepagents --agent mybot            # Start with agent named 'mybot'
-  deepagents --no-memory              # Start without long-term memory
-  deepagents list                     # List all agents
-  deepagents reset --agent mybot      # Reset mybot to default
-  deepagents reset --agent mybot --target other   # Reset mybot to copy of 'other' agent
-
-[bold]Long-term Memory:[/bold]
-  By default, long-term memory is ENABLED using agent name 'agent'.
-  Memory includes:
-  - Persistent agent.md file with your instructions
-  - /memories/ folder for storing context across sessions
-  
-  Use --no-memory to disable these features.
-  Note: --agent and --no-memory cannot be used together.
-
-[bold]Agent Storage:[/bold]
-  Agents are stored in: ~/.deepagents/AGENT_NAME/
-  Each agent has an agent.md file containing its prompt
-
-[bold]Interactive Commands:[/bold]
-  quit, exit, q    Exit the session
-  help             Show usage examples
-    """
-    console.print(help_text)
+    console.print()
+    console.print(DEEP_AGENTS_ASCII, style=f"bold {COLORS['primary']}")
+    console.print()
+    
+    console.print("[bold]Usage:[/bold]", style=COLORS["primary"])
+    console.print("  deepagents [--agent NAME]                      Start interactive session")
+    console.print("  deepagents list                                List all available agents")
+    console.print("  deepagents reset --agent AGENT                 Reset agent to default prompt")
+    console.print("  deepagents reset --agent AGENT --target SOURCE Reset agent to copy of another agent")
+    console.print("  deepagents help                                Show this help message")
+    console.print()
+    
+    console.print("[bold]Examples:[/bold]", style=COLORS["primary"])
+    console.print("  deepagents                              # Start with default agent", style=COLORS["dim"])
+    console.print("  deepagents --agent mybot                # Start with agent named 'mybot'", style=COLORS["dim"])
+    console.print("  deepagents list                         # List all agents", style=COLORS["dim"])
+    console.print("  deepagents reset --agent mybot          # Reset mybot to default", style=COLORS["dim"])
+    console.print("  deepagents reset --agent mybot --target other # Reset mybot to copy of 'other' agent", style=COLORS["dim"])
+    console.print()
+    
+    console.print("[bold]Long-term Memory:[/bold]", style=COLORS["primary"])
+    console.print("  By default, long-term memory is ENABLED using agent name 'agent'.", style=COLORS["dim"])
+    console.print("  Memory includes:", style=COLORS["dim"])
+    console.print("  - Persistent agent.md file with your instructions", style=COLORS["dim"])
+    console.print("  - /memories/ folder for storing context across sessions", style=COLORS["dim"])
+    console.print()
+    
+    console.print("[bold]Agent Storage:[/bold]", style=COLORS["primary"])
+    console.print("  Agents are stored in: ~/.deepagents/AGENT_NAME/", style=COLORS["dim"])
+    console.print("  Each agent has an agent.md file containing its prompt", style=COLORS["dim"])
+    console.print()
+    
+    console.print("[bold]Interactive Commands:[/bold]", style=COLORS["primary"])
+    console.print("  quit, exit, q    Exit the session", style=COLORS["dim"])
+    console.print()
 
 
 def parse_args():
@@ -502,8 +502,6 @@ async def main(assistant_id: str):
         execution_policy=HostExecutionPolicy()
     )
 
-    backend = FilesystemBackend()
-    
     # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
     agent_dir = Path.home() / ".deepagents" / assistant_id
     agent_dir.mkdir(parents=True, exist_ok=True)
@@ -516,8 +514,14 @@ async def main(assistant_id: str):
     # This handles both /memories/ files and /agent.md
     long_term_backend = FilesystemBackend(root_dir=agent_dir, virtual_mode=True)
 
+    # Composite backend: current working directory for default, agent directory for /memories/
+    backend = CompositeBackend(
+        default=FilesystemBackend(),
+        routes={"/memories/": long_term_backend}
+    )
+
     # Use the same backend for agent memory middleware
-    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend), shell_middleware]
+    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend, memory_path="/memories/"), shell_middleware]
     system_prompt = f"""### Current Working Directory
 
 The filesystem backend is currently operating in: `{Path.cwd()}`"""
@@ -526,7 +530,6 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
         system_prompt=system_prompt,
         tools=tools,
         memory_backend=backend,
-        use_longterm_memory=long_term_backend,
         middleware=agent_middleware,
     ).with_config(config)
     
@@ -535,7 +538,7 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
     try:
         await simple_cli(agent, assistant_id)
     except KeyboardInterrupt:
-        console.print("\n\n[bold cyan]👋 Goodbye![/bold cyan]\n")
+        console.print(f"\n\nGoodbye!", style=COLORS["primary"])
     except Exception as e:
         console.print(f"\n[bold red]❌ Error:[/bold red] {e}\n")
 

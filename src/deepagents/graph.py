@@ -49,7 +49,6 @@ def create_deep_agent(
     checkpointer: Checkpointer | None = None,
     store: BaseStore | None = None,
     memory_backend: MemoryBackend | None = None,
-    use_longterm_memory: MemoryBackend | None | bool = None,
     interrupt_on: dict[str, bool | InterruptOnConfig] | None = None,
     debug: bool = False,
     name: str | None = None,
@@ -58,15 +57,15 @@ def create_deep_agent(
     """Create a deep agent.
 
     This agent will by default have access to a tool to write todos (write_todos),
-    four file editing tools: write_file, ls, read_file, edit_file, and a tool to call
-    subagents.
+    six file editing tools: write_file, ls, read_file, edit_file, glob_search, grep_search,
+    and a tool to call subagents.
 
     Args:
+        model: The model to use. Defaults to Claude Sonnet 4.
         tools: The tools the agent should have access to.
         system_prompt: The additional instructions the agent should have. Will go in
             the system prompt.
         middleware: Additional middleware to apply after standard middleware.
-        model: The model to use.
         subagents: The subagents to use. Each subagent should be a dictionary with the
             following keys:
                 - `name`
@@ -80,11 +79,10 @@ def create_deep_agent(
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persisting longterm memories.
-        memory_backend: Optional pluggable memory backend for file storage. Takes full control
-            of filesystem storage.
-        long_term_backend: Optional backend for /memories/ files. Creates composite backend
-            with StateBackend as default.
+        store: Optional store for persistent storage (required if memory_backend uses StoreBackend).
+        memory_backend: Optional backend for file storage. Defaults to StateBackend (ephemeral
+            storage in agent state). For persistent or hybrid storage, use CompositeBackend.
+            Example: CompositeBackend(default=StateBackend(), routes={"/memories/": StoreBackend()})
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
             interrupt configs.
         debug: Whether to enable debug mode. Passed through to create_agent.
@@ -97,25 +95,16 @@ def create_deep_agent(
     if model is None:
         model = get_default_model()
 
-    # Build filesystem middleware kwargs
-    filesystem_kwargs = {}
-    if memory_backend is not None:
-        filesystem_kwargs["backend"] = memory_backend
-    if use_longterm_memory is not None:
-        if use_longterm_memory is True and store is None:
-            raise ValueError("If specifying `use_longterm_memory=True`, you must pass a store")
-        filesystem_kwargs["long_term_memory"] = use_longterm_memory
-
     deepagent_middleware = [
         TodoListMiddleware(),
-        FilesystemMiddleware(**filesystem_kwargs),
+        FilesystemMiddleware(memory_backend=memory_backend),
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
             subagents=subagents if subagents is not None else [],
             default_middleware=[
                 TodoListMiddleware(),
-                FilesystemMiddleware(backend=memory_backend),
+                FilesystemMiddleware(memory_backend=memory_backend),
                 SummarizationMiddleware(
                     model=model,
                     max_tokens_before_summary=170000,

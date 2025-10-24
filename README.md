@@ -296,19 +296,27 @@ agent = create_deep_agent(
 )
 ```
 
-### `use_longterm_memory`
-Deep agents come with a local filesystem to offload memory to. This filesystem is stored in state, and is therefore transient to a single thread.
+### `memory_backend`
+Deep agents come with a local filesystem to offload memory to. By default, this filesystem is stored in state (ephemeral, transient to a single thread).
 
-You can extend deep agents with long-term memory by providing a Store and setting use_longterm_memory=True.
+You can configure persistent long-term memory using a CompositeBackend with StoreBackend:
 
 ```python
 from deepagents import create_deep_agent
+from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
 from langgraph.store.memory import InMemoryStore
 
 store = InMemoryStore()  # Or any other Store object
+
+# Create a hybrid backend: ephemeral files in / and persistent files in /memories/
+backend = CompositeBackend(
+    default=StateBackend(),
+    routes={"/memories/": StoreBackend()}
+)
+
 agent = create_deep_agent(
-    store=store,
-    use_longterm_memory=True
+    memory_backend=backend,
+    store=store
 )
 ```
 
@@ -384,6 +392,7 @@ Context engineering is one of the main challenges in building effective agents. 
 ```python
 from langchain.agents import create_agent
 from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
 
 # FilesystemMiddleware is included by default in create_deep_agent
 # You can customize it if building a custom agent
@@ -391,8 +400,13 @@ agent = create_agent(
     model="anthropic:claude-sonnet-4-20250514",
     middleware=[
         FilesystemMiddleware(
-            long_term_memory=False,  # Enables access to long-term memory, defaults to False. You must attach a store to use long-term memory.
-            system_prompt="Write to the filesystem when...",  # Optional custom addition to the system prompt
+            memory_backend=StateBackend(),  # Optional: customize storage backend (defaults to StateBackend)
+            # For persistent memory, use CompositeBackend:
+            # memory_backend=CompositeBackend(
+            #     default=StateBackend(),
+            #     routes={"/memories/": StoreBackend()}
+            # )
+            system_prompt="Write to the filesystem when...",  # Optional custom system prompt override
             custom_tool_descriptions={
                 "ls": "Use the ls tool when...",
                 "read_file": "Use the read_file tool to..."
