@@ -52,19 +52,16 @@ class FilesystemBackend:
             return path
         return self.cwd / path
 
-    def ls(self, path: Optional[str] = None) -> list[str]:
+    def ls(self, path: str) -> list[str]:
         """List files from filesystem.
 
         Args:
-            path: Optional directory path to list files from (absolute or relative to cwd).
-                  Defaults to current working directory if not provided.Returns:
+            path: Absolute directory path to list files from.
+        
+        Returns:
             List of absolute file paths.
         """
-        if path is None:
-            # Default to current working directory
-            dir_path = self.cwd
-        else:
-            dir_path = self._resolve_path(path)
+        dir_path = self._resolve_path(path)
         if not dir_path.exists() or not dir_path.is_dir():
             return []
 

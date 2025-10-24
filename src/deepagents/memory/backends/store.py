@@ -159,18 +159,20 @@ class StoreBackend:
 
         return all_items
     
-    def ls(self, path: Optional[str] = None) -> list[str]:
+    def ls(self, path: str) -> list[str]:
         """List files from store.
         
         Args:
-            path: Optional path to filter results.Returns:
+            path: Absolute path to directory.
+        
+        Returns:
             List of file paths.
         """
         store = self._get_store()
         namespace = self._get_namespace()
         
-        # Search store with optional path filter
-        items = self._search_store_paginated(store, namespace, filter={"prefix": path} if path else None)
+        # Search store with path filter
+        items = self._search_store_paginated(store, namespace, filter={"prefix": path})
         
         return [item.key for item in items]
     

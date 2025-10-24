@@ -27,15 +27,14 @@ class MemoryBackend(Protocol):
     }
     """
     
-    def ls(self, path: Optional[str] = None) -> list[str]:
-        """List all file paths, optionally filtered by path.
+    def ls(self, path: str) -> list[str]:
+        """List all file paths in a directory.
         
         Args:
-            path: Optional path to filter results (e.g., "/subdir/", "/memories/")
-                  If None, returns all files.
+            path: Absolute path to directory (e.g., "/", "/subdir/", "/memories/")
         
         Returns:
-            List of absolute file paths matching the path filter.
+            List of absolute file paths in the specified directory.
         """
         ...
     

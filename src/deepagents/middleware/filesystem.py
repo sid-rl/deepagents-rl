@@ -135,11 +135,11 @@ class FilesystemState(AgentState):
     """Files in the filesystem."""
 
 
-LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the filesystem, optionally filtering by directory.
+LIST_FILES_TOOL_DESCRIPTION = """Lists all files in the filesystem, filtering by directory.
 
 Usage:
-- The list_files tool will return a list of all files in the filesystem.
-- You can optionally provide a path parameter to list files in a specific directory.
+- The path parameter must be an absolute path, not a relative path
+- The list_files tool will return a list of all files in the specified directory.
 - This is very useful for exploring the file system and finding the right file to read or edit.
 - You should almost ALWAYS use this tool before using the Read or Edit tools."""
 
@@ -211,7 +211,7 @@ FILESYSTEM_SYSTEM_PROMPT = """## Filesystem Tools `ls`, `read_file`, `write_file
 You have access to a filesystem which you can interact with using these tools.
 All file paths must start with a /.
 
-- ls: list all files in the filesystem
+- ls: list files in a directory (requires absolute path)
 - read_file: read a file from the filesystem
 - write_file: write to a file in the filesystem
 - edit_file: edit a file in the filesystem
@@ -235,10 +235,10 @@ def _ls_tool_generator(
     tool_description = custom_description or LIST_FILES_TOOL_DESCRIPTION
 
     @tool(description=tool_description)
-    def ls(runtime: ToolRuntime[None, FilesystemState], path: str | None = None) -> list[str]:
+    def ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> list[str]:
         # Resolve backend if it's a factory function
         resolved_backend = backend(runtime) if callable(backend) else backend
-        validated_path = _validate_path(path) if path is not None else None
+        validated_path = _validate_path(path)
         files = resolved_backend.ls(validated_path)
         return files
 

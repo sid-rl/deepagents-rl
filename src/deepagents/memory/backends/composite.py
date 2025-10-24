@@ -77,39 +77,25 @@ class CompositeBackend:
         
         return self.default, key
     
-    def ls(self, path: Optional[str] = None) -> list[str]:
-        """List files from all backends, with appropriate prefixes.
+    def ls(self, path: str) -> list[str]:
+        """List files from backends, with appropriate prefixes.
         
         Args:
-            path: Optional path to filter results.Returns:
+            path: Absolute path to directory.
+        
+        Returns:
             List of file paths with route prefixes added.
         """
-        if path is None:
-            # No filter: query all backends and combine results
-            result: list[str] = []
-            
-            # Get all files from default backend
-            result.extend(self.default.ls(None))
-            
-            # Get all files from each routed backend, adding route prefix
-            for route_prefix, backend in self.routes.items():
-                keys = backend.ls(None)
-                result.extend(f"{route_prefix[:-1]}{key}" for key in keys)
-            
-            return result
-        else:
-            # Path provided: determine which backend(s) to query
-            
-            # Check if path matches a specific route
-            for route_prefix, backend in self.sorted_routes:
-                if path.startswith(route_prefix.rstrip("/")):
-                    # Query only the matching routed backend
-                    search_path = path[len(route_prefix) - 1:]
-                    keys = backend.ls(search_path if search_path != "/" else None)
-                    return [f"{route_prefix[:-1]}{key}" for key in keys]
-            
-            # Path doesn't match a route: query only default backend
-            return self.default.ls(path)
+        # Check if path matches a specific route
+        for route_prefix, backend in self.sorted_routes:
+            if path.startswith(route_prefix.rstrip("/")):
+                # Query only the matching routed backend
+                search_path = path[len(route_prefix) - 1:]
+                keys = backend.ls(search_path if search_path else "/")
+                return [f"{route_prefix[:-1]}{key}" for key in keys]
+        
+        # Path doesn't match a route: query only default backend
+        return self.default.ls(path)
     
     def read(
         self, 

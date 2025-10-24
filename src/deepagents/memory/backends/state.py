@@ -38,21 +38,18 @@ class StateBackend:
         Args:"""
         self.runtime = runtime
     
-    def ls(self, path: Optional[str] = None) -> list[str]:
+    def ls(self, path: str) -> list[str]:
         """List files from state.
         
         Args:
-            path: Optional path to filter results.
+            path: Absolute path to directory.
         
         Returns:
             List of file paths.
         """
-        files = self.self.runtime.state.get("files", {})
+        files = self.runtime.state.get("files", {})
         keys = list(files.keys())
-        
-        if path is not None:
-            keys = [k for k in keys if k.startswith(path)]
-        
+        keys = [k for k in keys if k.startswith(path)]
         return keys
     
     def read(
