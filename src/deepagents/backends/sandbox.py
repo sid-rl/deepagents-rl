@@ -2,7 +2,7 @@ import abc
 from typing import TypedDict
 
 from deepagents.backends.fs import FileSystem, FileSystemCapabilities
-from deepagents.backends.pagination import PaginationCursor, PageResults
+from deepagents.backends.pagination import PageResults, PaginationCursor
 from deepagents.backends.process import Process, ProcessCapabilities
 
 
@@ -24,7 +24,7 @@ class Sandbox(abc.ABC):
     @property
     def get_capabilities(self) -> SandboxCapabilities:
         """Get the capabilities of the sandbox backend."""
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class SandboxMetadata(TypedDict):
@@ -38,7 +38,7 @@ class SandboxProvider(abc.ABC):
     """Abstract class for sandbox providers."""
 
     @abc.abstractmethod
-    def get_or_create(self, id: str | None) -> Sandbox:
+    def get_or_create(self, id: str | None = None, **kwargs) -> Sandbox:
         """Get or create a sandbox instance by ID."""
 
     @abc.abstractmethod
@@ -47,8 +47,7 @@ class SandboxProvider(abc.ABC):
 
         Do not raise an error if the sandbox does not exist.
         """
-        pass
 
     @abc.abstractmethod
-    def list(self, *, cursor: PaginationCursor | None, **kwargs) -> PageResults[SandboxMetadata]:
+    def list(self, *, cursor: PaginationCursor | None = None, **kwargs) -> PageResults[SandboxMetadata]:
         """List all sandbox IDs."""

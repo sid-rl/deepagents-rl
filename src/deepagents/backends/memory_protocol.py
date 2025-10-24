@@ -1,6 +1,6 @@
 """An LLM oriented interface for working with files efficiently."""
 
-from typing import Protocol, Optional
+from typing import Protocol
 
 from deepagents.backends.fs import FileInfo
 
@@ -12,7 +12,7 @@ class MemoryBackend(Protocol):
     and provide a uniform interface for file operations.
     """
 
-    def ls(self, prefix: Optional[str] = None) -> list[FileInfo]:
+    def ls(self, prefix: str | None = None) -> list[FileInfo]:
         """List all file paths, optionally filtered by prefix.
 
         Args:
@@ -108,7 +108,7 @@ class MemoryBackend(Protocol):
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        include: str | None = None,
         output_mode: str = "files_with_matches",
     ) -> str:
         """Search for a pattern in files.

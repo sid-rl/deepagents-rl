@@ -1,7 +1,7 @@
 """Abstraction for modeling a process."""
 
 import abc
-from typing import NotRequired, Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 
 class ProcessCapabilities(TypedDict):
@@ -27,7 +27,7 @@ class Process(abc.ABC):
     def execute(
         self,
         command: str,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         *,
         timeout: int = 30 * 60,
     ) -> ExecuteResponse:

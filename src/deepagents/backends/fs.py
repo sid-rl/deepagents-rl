@@ -1,6 +1,4 @@
-from typing import Protocol, TypedDict, Optional
-
-from typing_extensions import NotRequired, Literal
+from typing import Literal, NotRequired, Protocol, TypedDict
 
 
 class FileSystemCapabilities(TypedDict):
@@ -46,7 +44,7 @@ class FileSystem(Protocol):
     and provide a uniform interface for file operations.
     """
 
-    def ls(self, prefix: Optional[str] = None) -> list[FileInfo]:
+    def ls(self, prefix: str | None = None) -> list[FileInfo]:
         """List all file paths, optionally filtered by prefix.
 
         Args:
@@ -130,7 +128,7 @@ class FileSystem(Protocol):
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        include: str | None = None,
         output_mode: str = "files_with_matches",
     ) -> str:
         """Search for a pattern in files.

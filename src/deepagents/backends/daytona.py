@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from daytona import Daytona, DaytonaConfig
+from daytona import Daytona, DaytonaConfig, FileUpload
 
 from deepagents.backends.fs import FileInfo, FileSystem, FileSystemCapabilities
 from deepagents.backends.pagination import PageResults, PaginationCursor
 from deepagents.backends.process import ExecuteResponse, Process, ProcessCapabilities
-from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, \
-    SandboxProvider
+from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, SandboxProvider
 
 if TYPE_CHECKING:
     from daytona import Sandbox as DaytonaSandboxClient
@@ -24,7 +23,7 @@ class DaytonaFileSystem(FileSystem):
         """Initialize the DaytonaFileSystem with a Daytona sandbox client."""
         self._sandbox = sandbox
 
-    def ls(self, prefix: Optional[str] = None) -> list[FileInfo]:
+    def ls(self, prefix: str | None = None) -> list[FileInfo]:
         """List all file paths, optionally filtered by prefix."""
         path = prefix or "/"
         files = self._sandbox.fs.list_files(path)
@@ -32,17 +31,15 @@ class DaytonaFileSystem(FileSystem):
         result: list[FileInfo] = []
         for file in files:
             # Convert Daytona format to our FileInfo format
-            file_info: FileInfo = {
-                "path": file.get("name", ""),
-            }
+            file_info: FileInfo = {"path": file.name}
 
             # Add optional fields if present
             if "is_dir" in file:
-                file_info["kind"] = "dir" if file["is_dir"] else "file"
+                file_info["kind"] = "dir" if file.is_dir else "file"
             if "size" in file:
-                file_info["size"] = int(file["size"])
+                file_info["size"] = int(file.size)
             if "mod_time" in file:
-                file_info["modified_at"] = file["mod_time"]
+                file_info["modified_at"] = file.mod_time
 
             result.append(file_info)
 
@@ -50,7 +47,8 @@ class DaytonaFileSystem(FileSystem):
 
     def upload_file(self, file: bytes, path: str, *, timeout: int = 30 * 60) -> None:
         """Upload a file to the sandbox."""
-        self._sandbox.fs.upload_file(file, path, timeout=timeout)
+        uploads = [FileUpload(source=file, destination=path)]
+        self._sandbox.fs.upload_files(uploads, timeout=timeout)
 
     def download_file(self, path: str, *, timeout: int = 30 * 60) -> bytes:
         """Download a file from the sandbox."""
@@ -73,19 +71,19 @@ class DaytonaFileSystem(FileSystem):
                 f"elif [ ! -s '{file_path}' ]; then "
                 f"echo 'System reminder: File exists but has empty contents'; "
                 f"else "
-                f"tail -n +{start_line} '{file_path}' | head -n {limit} | nl -ba -nln -w6 -s$'\\t' -v{start_line}; "
+                f"tail -n +{start_line} '{file_path}' | head -n {limit} | nl -ba -nrn -w6 -s$'\\t' -v{start_line}; "
                 f"fi"
             )
-            result = self._sandbox.process.exec({"command": cmd})
+            result = self._sandbox.process.exec(cmd)
 
-            output = result.get("result", "").rstrip()
-            exit_code = result.get("exit_code", 0)
+            output = result.result.rstrip()
+            exit_code = result.exit_code
 
             if exit_code != 0 or "Error: File not found" in output:
                 return f"Error: File '{file_path}' not found"
 
             return output
-        except Exception as e:
+        except Exception:
             return f"Error: File '{file_path}' not found"
 
     def edit(
@@ -96,42 +94,39 @@ class DaytonaFileSystem(FileSystem):
         replace_all: bool = False,
     ) -> str:
         """Edit a file by replacing string occurrences using a single shell command."""
-        try:
-            # Escape single quotes in the strings for shell safety
-            old_escaped = old_string.replace("'", "'\\''")
-            new_escaped = new_string.replace("'", "'\\''")
+        # Escape single quotes in the strings for shell safety
+        old_escaped = old_string.replace("'", "'\\''")
+        new_escaped = new_string.replace("'", "'\\''")
 
-            # Use Python one-liner for complex string replacement logic
-            python_code = (
-                f"import sys; "
-                f"text = open('{file_path}', 'r').read(); "
-                f"old = '''{old_escaped}'''; "
-                f"new = '''{new_escaped}'''; "
-                f"count = text.count(old); "
-                f"sys.exit(1) if count == 0 else (sys.exit(2) if count > 1 and not {replace_all} else None); "
-                f"result = text.replace(old, new) if {replace_all} else text.replace(old, new, 1); "
-                f"open('{file_path}', 'w').write(result); "
-                f"print(count)"
-            )
+        # Use Python one-liner for complex string replacement logic
+        python_code = (
+            f"import sys; "
+            f"text = open('{file_path}', 'r').read(); "
+            f"old = '''{old_escaped}'''; "
+            f"new = '''{new_escaped}'''; "
+            f"count = text.count(old); "
+            f"sys.exit(1) if count == 0 else (sys.exit(2) if count > 1 and not {replace_all} else None); "
+            f"result = text.replace(old, new) if {replace_all} else text.replace(old, new, 1); "
+            f"open('{file_path}', 'w').write(result); "
+            f"print(count)"
+        )
 
-            cmd = f'python3 -c "{python_code}" 2>&1'
-            result = self._sandbox.process.exec({"command": cmd})
+        cmd = f'python3 -c "{python_code}" 2>&1'
+        result = self._sandbox.process.exec(cmd)
 
-            exit_code = result.get("exit_code", 0)
-            output = result.get("result", "").strip()
+        exit_code = result.exit_code
+        output = result.result.strip()
 
-            if exit_code == 1:
-                return f"Error: String not found in file: '{old_string}'"
-            elif exit_code == 2:
-                # Get count from before the error
-                return f"Error: String '{old_string}' appears multiple times. Use replace_all=True to replace all occurrences."
-            elif exit_code != 0:
-                return f"Error: File '{file_path}' not found"
-
-            count = output
-            return f"Successfully replaced {count} occurrence(s) in {file_path}"
-        except Exception as e:
+        if exit_code == 1:
+            return f"Error: String not found in file: '{old_string}'"
+        if exit_code == 2:
+            # Get count from before the error
+            return f"Error: String '{old_string}' appears multiple times. Use replace_all=True to replace all occurrences."
+        if exit_code != 0:
             return f"Error: File '{file_path}' not found"
+
+        count = output
+        return f"Successfully replaced {count} occurrence(s) in {file_path}"
 
     def delete(self, file_path: str) -> None:
         """Delete a file by path."""
@@ -143,59 +138,53 @@ class DaytonaFileSystem(FileSystem):
         self,
         pattern: str,
         path: str = "/",
-        include: Optional[str] = None,
+        include: str | None = None,
         output_mode: str = "files_with_matches",
     ) -> str:
         """Search for a pattern in files using a single shell command."""
-        try:
-            # Build grep command based on output_mode
-            grep_opts = "-r"  # recursive
+        # Build grep command based on output_mode
+        grep_opts = "-r"  # recursive
 
-            if output_mode == "files_with_matches":
-                grep_opts += "l"  # files with matches
-            elif output_mode == "count":
-                grep_opts += "c"  # count per file
+        if output_mode == "files_with_matches":
+            grep_opts += "l"  # files with matches
+        elif output_mode == "count":
+            grep_opts += "c"  # count per file
 
-            # Add include pattern if specified
-            include_pattern = ""
-            if include:
-                include_pattern = f"--include='{include}'"
+        # Add include pattern if specified
+        include_pattern = ""
+        if include:
+            include_pattern = f"--include='{include}'"
 
-            # Escape pattern for shell
-            pattern_escaped = pattern.replace("'", "'\\''")
+        # Escape pattern for shell
+        pattern_escaped = pattern.replace("'", "'\\''")
 
-            cmd = f"grep {grep_opts} {include_pattern} -e '{pattern_escaped}' '{path}' 2>/dev/null || true"
-            result = self._sandbox.process.exec({"command": cmd})
+        cmd = f"grep {grep_opts} {include_pattern} -e '{pattern_escaped}' '{path}' 2>/dev/null || true"
+        result = self._sandbox.process.exec(cmd)
 
-            return result.get("result", "").rstrip()
-        except Exception as e:
-            return ""
+        return result.result.rstrip()
 
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern using a single shell command."""
-        try:
-            # Escape pattern for shell
-            pattern_escaped = pattern.replace("'", "'\\''")
+        # Escape pattern for shell
+        pattern_escaped = pattern.replace("'", "'\\''")
 
-            # Use Python's glob module for proper glob pattern matching
-            python_code = (
-                f"import glob; "
-                f"import os; "
-                f"os.chdir('{path}'); "
-                f"results = sorted(glob.glob('{pattern_escaped}', recursive=True)); "
-                f"print('\\n'.join(results))"
-            )
+        # Use Python's glob module for proper glob pattern matching
+        python_code = (
+            f"import glob; "
+            f"import os; "
+            f"os.chdir('{path}'); "
+            f"results = sorted(glob.glob('{pattern_escaped}', recursive=True)); "
+            f"print('\\n'.join(results))"
+        )
 
-            cmd = f'python3 -c "{python_code}" 2>/dev/null'
-            result = self._sandbox.process.exec({"command": cmd})
+        cmd = f'python3 -c "{python_code}" 2>/dev/null'
+        result = self._sandbox.process.exec(cmd)
 
-            output = result.get("result", "").strip()
-            if not output:
-                return []
-
-            return output.split("\n")
-        except Exception as e:
+        output = result.result.strip()
+        if not output:
             return []
+
+        return output.split("\n")
 
     @property
     def get_capabilities(self) -> FileSystemCapabilities:
@@ -218,12 +207,11 @@ class DaytonaProcess(Process):
     def __init__(self, sandbox: DaytonaSandboxClient) -> None:
         """Initialize the DaytonaProcess with a Daytona sandbox client."""
         self._sandbox = sandbox
-        self._session_id = "main-exec-session"
 
     def execute(
         self,
         command: str,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         *,
         timeout: int = 30 * 60,
     ) -> ExecuteResponse:
@@ -234,10 +222,10 @@ class DaytonaProcess(Process):
             cwd: Working directory to execute the command in.
             timeout: Maximum execution time in seconds (default: 30 minutes).
         """
-        response = self._sandbox.process.exec(self._session_id, {"command": command})
+        response = self._sandbox.process.exec(command, cwd=cwd, timeout=timeout)
         return ExecuteResponse(
-            result=response.get("result", ""),
-            exit_code=response.get("exit_code"),
+            result=response.result,
+            exit_code=response.exit_code,
         )
 
     def get_capabilities(self) -> ProcessCapabilities:
@@ -283,7 +271,7 @@ class DaytonaSandbox(Sandbox):
 class DaytonaSandboxProvider(SandboxProvider):
     """Daytona sandbox provider implementation."""
 
-    def __init__(self, *, client: Optional[Daytona] = None, api_key: Optional[str] = None) -> None:
+    def __init__(self, *, client: Daytona | None = None, api_key: str | None = None) -> None:
         """Initialize the DaytonaSandboxProvider with a Daytona client.
 
         Args:
@@ -302,7 +290,7 @@ class DaytonaSandboxProvider(SandboxProvider):
 
         self._client = client
 
-    def get_or_create(self, id: str | None) -> Sandbox:
+    def get_or_create(self, id: str | None = None, **kwargs) -> Sandbox:
         """Get or create a sandbox instance by ID.
 
         If id is None, creates a new sandbox.
@@ -311,13 +299,10 @@ class DaytonaSandboxProvider(SandboxProvider):
         if id is None:
             # Create a new sandbox
             sandbox_client = self._client.create()
-            # Create the main execution session
-            sandbox_client.process.create_session("main-exec-session")
             return DaytonaSandbox(sandbox_client)
-        else:
-            # Get existing sandbox
-            sandbox_client = self._client.get(id)
-            return DaytonaSandbox(sandbox_client)
+        # Get existing sandbox
+        sandbox_client = self._client.get(id)
+        return DaytonaSandbox(sandbox_client)
 
     def delete(self, id: str) -> None:
         """Delete a sandbox instance by ID.
@@ -331,17 +316,17 @@ class DaytonaSandboxProvider(SandboxProvider):
             # Silently ignore if sandbox doesn't exist
             pass
 
-    def list(self, *, cursor: PaginationCursor | None, **kwargs) -> PageResults[SandboxMetadata]:
+    def list(self, *, cursor: PaginationCursor | None = None, **kwargs) -> PageResults[SandboxMetadata]:
         """List all sandbox IDs.
 
         Note: Daytona's list() method returns a simple list of IDs,
         so we don't support pagination at the API level.
         """
         # Daytona's list returns list[str] of sandbox IDs
-        sandbox_ids = self._client.list()
-
+        paginated_sandboxes = self._client.list()
+        items: SandboxMetadata = [{"id": item.id} for item in paginated_sandboxes.items]
         # Convert to SandboxMetadata format
-        items: list[SandboxMetadata] = [{"id": sid} for sid in sandbox_ids]
+        items: list[SandboxMetadata] = items
 
         # Since Daytona doesn't support pagination, we return all items
         return PageResults(
