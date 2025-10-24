@@ -10,7 +10,7 @@ from langgraph.types import Command
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
 
-from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement
+from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement, truncate_if_too_long
 
 
 class FilesystemBackend:
@@ -94,7 +94,7 @@ class FilesystemBackend:
         except (OSError, PermissionError):
             pass
 
-        return sorted(results)
+        return truncate_if_too_long(sorted(results))
     
     def read(
         self, 
@@ -266,22 +266,22 @@ class FilesystemBackend:
         
         if not file_matches:
             return f"No matches found for pattern: '{pattern}'"
-        
+
         if output_mode == "files_with_matches":
-            return "\n".join(sorted(file_matches.keys()))
+            return truncate_if_too_long("\n".join(sorted(file_matches.keys())))
         elif output_mode == "count":
             results = []
             for fp in sorted(file_matches.keys()):
                 count = len(file_matches[fp])
                 results.append(f"{fp}: {count}")
-            return "\n".join(results)
+            return truncate_if_too_long("\n".join(results))
         else:
             results = []
             for fp in sorted(file_matches.keys()):
                 results.append(f"{fp}:")
                 for line_num, line in file_matches[fp]:
                     results.append(f"  {line_num}: {line}")
-            return "\n".join(results)
+            return truncate_if_too_long("\n".join(results))
     
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.
@@ -326,5 +326,5 @@ class FilesystemBackend:
                     results.append("/" + relative_path)
         except (OSError, ValueError):
             pass
-        
-        return sorted(results)
+
+        return truncate_if_too_long(sorted(results))
