@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from daytona import Daytona, DaytonaConfig, FileUpload
 
@@ -35,7 +35,7 @@ class DaytonaFileSystem(FileSystem):
 
             # Add optional fields if present
             if "is_dir" in file:
-                file_info["kind"] = "dir" if file.is_dir else "file"
+                file_info["kind"]: Literal["dir", "file"] = "dir" if file.is_dir else "file"
             if "size" in file:
                 file_info["size"] = int(file.size)
             if "mod_time" in file:
@@ -61,30 +61,27 @@ class DaytonaFileSystem(FileSystem):
         limit: int = 2000,
     ) -> str:
         """Read file content with line numbers using a single shell command."""
-        try:
-            # Single command that checks file, reads lines, and formats with line numbers
-            # tail -n +N starts from line N, head limits output, nl adds line numbers
-            start_line = offset + 1
-            cmd = (
-                f"if [ ! -f '{file_path}' ]; then "
-                f"echo 'Error: File not found'; exit 1; "
-                f"elif [ ! -s '{file_path}' ]; then "
-                f"echo 'System reminder: File exists but has empty contents'; "
-                f"else "
-                f"tail -n +{start_line} '{file_path}' | head -n {limit} | nl -ba -nrn -w6 -s$'\\t' -v{start_line}; "
-                f"fi"
-            )
-            result = self._sandbox.process.exec(cmd)
+        # Single command that checks file, reads lines, and formats with line numbers
+        # tail -n +N starts from line N, head limits output, nl adds line numbers
+        start_line = offset + 1
+        cmd = (
+            f"if [ ! -f '{file_path}' ]; then "
+            f"echo 'Error: File not found'; exit 1; "
+            f"elif [ ! -s '{file_path}' ]; then "
+            f"echo 'System reminder: File exists but has empty contents'; "
+            f"else "
+            f"tail -n +{start_line} '{file_path}' | head -n {limit} | nl -ba -nrn -w6 -s$'\\t' -v{start_line}; "
+            f"fi"
+        )
+        result = self._sandbox.process.exec(cmd)
 
-            output = result.result.rstrip()
-            exit_code = result.exit_code
+        output = result.result.rstrip()
+        exit_code = result.exit_code
 
-            if exit_code != 0 or "Error: File not found" in output:
-                return f"Error: File '{file_path}' not found"
-
-            return output
-        except Exception:
+        if exit_code != 0 or "Error: File not found" in output:
             return f"Error: File '{file_path}' not found"
+
+        return output
 
     def edit(
         self,
