@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from deepagents.backends.fs import FileSystem
@@ -174,8 +174,8 @@ class LocalFileSystem(FileSystem):
                     "path": "/" + str(base_path.relative_to(self.root_path)),
                     "kind": "file",
                     "size": stat.st_size,
-                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                    "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
                 }
             )
         else:
@@ -188,8 +188,8 @@ class LocalFileSystem(FileSystem):
                             "path": "/" + str(item.relative_to(self.root_path)),
                             "kind": "dir" if item.is_dir() else "file",
                             "size": stat.st_size if item.is_file() else 0,
-                            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                            "created_at": datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat(),
+                            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                            "created_at": datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat(),
                         }
                     )
                 except (PermissionError, OSError):
@@ -216,7 +216,7 @@ class LocalFileSystem(FileSystem):
         # Write file with O_NOFOLLOW to prevent symlink attacks
         try:
             fd = os.open(full_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
-            with os.fdopen(fd, 'wb') as f:
+            with os.fdopen(fd, "wb") as f:
                 f.write(file)
         except OSError as e:
             raise ValueError(f"Cannot write file '{path}': {e}") from e
@@ -242,7 +242,7 @@ class LocalFileSystem(FileSystem):
         # Open with O_NOFOLLOW to prevent symlink attacks
         try:
             fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, 'rb') as f:
+            with os.fdopen(fd, "rb") as f:
                 return f.read()
         except OSError as e:
             raise FileNotFoundError(f"Cannot read file: {path}") from e
@@ -274,7 +274,7 @@ class LocalFileSystem(FileSystem):
         # Open with O_NOFOLLOW to prevent symlink attacks
         try:
             fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, 'r', encoding='utf-8') as f:
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
                 content = f.read()
         except (OSError, UnicodeDecodeError, PermissionError) as e:
             return f"Error: Cannot read file '{file_path}': {e}"
@@ -323,7 +323,7 @@ class LocalFileSystem(FileSystem):
         # Open with O_NOFOLLOW to prevent symlink attacks
         try:
             fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(fd, 'r', encoding='utf-8') as f:
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
                 content = f.read()
         except (OSError, UnicodeDecodeError, PermissionError) as e:
             return f"Error: Cannot read file '{file_path}': {e}"
@@ -346,7 +346,7 @@ class LocalFileSystem(FileSystem):
         # Write back with O_NOFOLLOW to prevent symlink attacks
         try:
             fd = os.open(full_path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(new_content)
         except OSError as e:
             return f"Error: Cannot write file '{file_path}': {e}"
