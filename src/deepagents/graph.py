@@ -94,18 +94,18 @@ def create_deep_agent(
 
     deepagent_middleware = [
         TodoListMiddleware(),
-        # ShellToolMiddleware(workspace_root=root),
-        # FilesystemClaudeTextEditorMiddleware(root_path=root),
-        # FilesystemClaudeMemoryMiddleware(root_path=root),
+        FilesystemMiddleware(
+            long_term_memory=use_longterm_memory,
+        ),
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
             subagents=subagents if subagents is not None else [],
             default_middleware=[
                 TodoListMiddleware(),
-                # FilesystemClaudeTextEditorMiddleware(root_path=root),
-                # ShellToolMiddleware(workspace_root=root),
-                # FilesystemClaudeMemoryMiddleware(root_path=root),
+                FilesystemMiddleware(
+                    long_term_memory=use_longterm_memory,
+                ),
                 SummarizationMiddleware(
                     model=model,
                     max_tokens_before_summary=170000,
