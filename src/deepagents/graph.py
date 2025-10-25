@@ -19,6 +19,8 @@ from langgraph.types import Checkpointer
 
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
+from deepagents.middleware.general_factory import GeneralizedShellMiddleware, GeneralizedFilesystemMiddleware
+from deepagents.backends.daytona import DaytonaSandboxProvider
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
@@ -94,18 +96,14 @@ def create_deep_agent(
 
     deepagent_middleware = [
         TodoListMiddleware(),
-        FilesystemMiddleware(
-            long_term_memory=use_longterm_memory,
-        ),
+        GeneralizedFilesystemMiddleware(sandbox_provider=DaytonaSandboxProvider()),
+        GeneralizedShellMiddleware(sandbox_provider=DaytonaSandboxProvider()),
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
             subagents=subagents if subagents is not None else [],
             default_middleware=[
                 TodoListMiddleware(),
-                FilesystemMiddleware(
-                    long_term_memory=use_longterm_memory,
-                ),
                 SummarizationMiddleware(
                     model=model,
                     max_tokens_before_summary=170000,

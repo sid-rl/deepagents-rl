@@ -333,3 +333,22 @@ class DaytonaSandboxProvider(SandboxProvider):
                 has_more=False,
             ),
         )
+
+    def get_capabilities(self) -> SandboxCapabilities:
+        """Get the capabilities of the sandbox provider."""
+        # We need to make this class methods likely...
+        return {
+            "fs": {
+                "can_upload": True,
+                "can_download": True,
+                "can_list_files": True,
+                "can_read": True,
+                "can_edit": True,
+                "can_delete": False,
+                "can_grep": True,
+                "can_glob": True,
+            },
+            "process": {
+                "supports_exec": True,
+            },
+        }
