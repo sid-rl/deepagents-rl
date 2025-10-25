@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal, NotRequired, Any
+from typing import TYPE_CHECKING, Literal
 
 from daytona import Daytona, DaytonaConfig, FileUpload
-from langchain.agents import AgentState
-from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import StateT
-from langchain.tools import BaseTool
-from langgraph.runtime import Runtime
-from langgraph.typing import ContextT
 
 from deepagents.backends.fs import FileInfo, FileSystem, FileSystemCapabilities
 from deepagents.backends.pagination import PageResults, PaginationCursor
 from deepagents.backends.process import ExecuteResponse, Process, ProcessCapabilities
-from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, \
-    SandboxProvider
+from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, SandboxProvider
 
 if TYPE_CHECKING:
     from daytona import Sandbox as DaytonaSandboxClient
@@ -340,60 +333,3 @@ class DaytonaSandboxProvider(SandboxProvider):
                 has_more=False,
             ),
         )
-
-
-class SandboxState(AgentState):
-    """State schema for Daytona sandbox middleware."""
-
-    sandbox_id: NotRequired[str]
-
-
-def generate_tools(sandbox_provider: SandboxProvider, create_on: Literal["start", "usage"]) -> list[BaseTool]:
-    """Generate tools for interacting with the sandbox.
-
-    Args:
-        sandbox_provider: The sandbox provider to use.
-        create_on: When to create the sandbox ("start" or "usage").
-
-    Returns:
-        List of tools for sandbox interaction.
-    """
-    capabilities = sandbox_provider.get_capabilities()
-
-    fs_capabilities = capabilities["fs"]
-
-    if fs_capabilities['can_read']:
-        @tool
-        def read_file(file_path: str, runtime: ToolRuntime) -> str:
-            """Read a file from the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            return sandbox.fs.read(file_path)
-
-
-
-
-class GeneralizedFilesystemMiddleware(AgentMiddleware):
-    state_schema = SandboxState
-
-    def __init__(
-        self, sandbox_provider: SandboxProvider, *, terminate_on_complete: bool = True, create_on: Literal["start", "usage"] = "start"
-    ) -> None:
-        """Initialize the Daytona sandbox middleware."""
-        self.sandbox_provider = sandbox_provider
-        self.terminate_on_complete = terminate_on_complete
-        self.create_on = create_on
-
-        self.tools = generate_tools(sandbox_provider, create_on)
-
-    def before_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        if "sandbox_id" not in state and self.create_on == "start":
-            sandbox = self.sandbox_provider.get_or_create()
-            return {"sandbox_id": sandbox.id}
-        return {}
-
-    def after_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        """Terminate the sandbox after agent completion if configured to do so."""
-        if sandbox_id := state.get("sandbox_id") and self.terminate_on_complete:
-            self.sandbox_provider.delete(sandbox_id)
-        return None

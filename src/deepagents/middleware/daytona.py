@@ -1,16 +1,15 @@
-"""Zero abstraction."""
+"""Example shell middleware that has ZERO additional abstractions."""
 
 import logging
 import os
-from typing import Any
+from typing import Any, NotRequired
 
-from daytona import Daytona, DaytonaConfig, CreateSandboxFromSnapshotParams
+from daytona import CreateSandboxFromSnapshotParams, Daytona, DaytonaConfig
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain.tools import tool, ToolRuntime
+from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langgraph.runtime import Runtime
 from langgraph.types import Command
-from typing_extensions import NotRequired
 
 logger = logging.getLogger(__name__)
 
@@ -114,5 +113,4 @@ class DaytonaSandboxMiddleware(AgentMiddleware[SandboxState]):
                 self.daytona_client.delete(sandbox)
             except Exception as e:
                 logger.info("Error deleting sandbox %s: %s", sandbox_id, str(e))
-                pass
         return None

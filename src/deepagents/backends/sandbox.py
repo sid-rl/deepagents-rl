@@ -15,6 +15,7 @@ class SandboxCapabilities(TypedDict):
 
 class Sandbox(abc.ABC):
     """Abstract class for sandbox backends."""
+
     id: str | None
     """Unique identifier for the sandbox if applicable."""
 
@@ -53,7 +54,6 @@ class SandboxProvider(abc.ABC):
     @abc.abstractmethod
     def list(self, *, cursor: PaginationCursor | None = None, **kwargs) -> PageResults[SandboxMetadata]:
         """List all sandbox IDs."""
-
 
     @abc.abstractmethod
     def get_capabilities(self) -> SandboxCapabilities:
