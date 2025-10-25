@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
-from daytona import Daytona, DaytonaConfig, FileUpload
+from daytona import CreateSandboxFromSnapshotParams, Daytona, DaytonaConfig, FileUpload
 
 from deepagents.backends.fs import FileInfo, FileSystem, FileSystemCapabilities
 from deepagents.backends.pagination import PageResults, PaginationCursor
@@ -268,12 +268,22 @@ class DaytonaSandbox(Sandbox):
 class DaytonaSandboxProvider(SandboxProvider):
     """Daytona sandbox provider implementation."""
 
-    def __init__(self, *, client: Daytona | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        client: Daytona | None = None,
+        api_key: str | None = None,
+        auto_stop_minutes: int | None = None,
+        auto_delete_minutes: int | None = None,
+    ) -> None:
         """Initialize the DaytonaSandboxProvider with a Daytona client.
 
         Args:
             client: An existing Daytona client instance
             api_key: API key for creating a new Daytona client
+            auto_stop_minutes: Minutes of inactivity before sandbox auto-stops. Defaults to 15.
+            auto_delete_minutes: Minutes after stopping before sandbox is deleted. Defaults to 0
+                                (delete immediately on stop).
         """
         if client and api_key:
             raise ValueError("Provide either daytona_client or api_key, not both.")
@@ -286,6 +296,8 @@ class DaytonaSandboxProvider(SandboxProvider):
             client = Daytona(config)
 
         self._client = client
+        self.auto_stop_interval = auto_stop_minutes
+        self.auto_delete_interval = auto_delete_minutes
 
     def get_or_create(self, id: str | None = None, **kwargs) -> Sandbox:
         """Get or create a sandbox instance by ID.
@@ -294,8 +306,13 @@ class DaytonaSandboxProvider(SandboxProvider):
         If id is provided, retrieves the existing sandbox.
         """
         if id is None:
-            # Create a new sandbox
-            sandbox_client = self._client.create()
+            # Create a new sandbox with TTL parameters
+            sandbox_client = self._client.create(
+                params=CreateSandboxFromSnapshotParams(
+                    auto_stop_interval=self.auto_stop_interval,
+                    auto_delete_interval=self.auto_delete_interval,
+                )
+            )
             return DaytonaSandbox(sandbox_client)
         # Get existing sandbox
         sandbox_client = self._client.get(id)

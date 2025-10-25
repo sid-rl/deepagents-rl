@@ -17,10 +17,10 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
+from deepagents.backends.daytona import DaytonaSandboxProvider
+from deepagents.middleware.general_factory import GeneralizedFilesystemMiddleware, GeneralizedShellMiddleware
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent, SubAgentMiddleware
-from deepagents.middleware.general_factory import GeneralizedShellMiddleware, GeneralizedFilesystemMiddleware
-from deepagents.backends.daytona import DaytonaSandboxProvider
 
 BASE_AGENT_PROMPT = "In order to complete the objective that the user asks of you, you have access to a number of standard tools."
 
@@ -96,8 +96,10 @@ def create_deep_agent(
 
     deepagent_middleware = [
         TodoListMiddleware(),
-        GeneralizedFilesystemMiddleware(sandbox_provider=DaytonaSandboxProvider()),
-        GeneralizedShellMiddleware(sandbox_provider=DaytonaSandboxProvider()),
+        # Terminate on complete is False to allow persisting the content for a chat session.
+        # Warning that this keeps sandboxes alive until some TTL is hit
+        GeneralizedFilesystemMiddleware(sandbox_provider=DaytonaSandboxProvider(auto_delete_minutes=5), terminate_on_complete=False),
+        GeneralizedShellMiddleware(sandbox_provider=DaytonaSandboxProvider(auto_delete_minutes=5), terminate_on_complete=False),
         SubAgentMiddleware(
             default_model=model,
             default_tools=tools,
