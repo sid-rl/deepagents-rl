@@ -443,9 +443,13 @@ class FilesystemMiddleware(AgentMiddleware):
     the BackendProtocol.
 
     Args:
+<<<<<<< HEAD
         memory_backend: Backend for file storage. If not provided, defaults to StateBackend
             (ephemeral storage in agent state). For persistent storage or hybrid setups,
             use CompositeBackend with custom routes.
+=======
+        long_term_memory: Whether to enable longterm memory support.
+>>>>>>> master
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
         tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
