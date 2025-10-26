@@ -109,9 +109,7 @@ By default, `deepagents` uses `"claude-sonnet-4-5-20250929"`. You can customize 
 from langchain.chat_models import init_chat_model
 from deepagents import create_deep_agent
 
-model = init_chat_model(
-    model="openai:gpt-5",  
-)
+model = init_chat_model("openai:gpt-4o")
 agent = create_deep_agent(
     model=model,
 )
