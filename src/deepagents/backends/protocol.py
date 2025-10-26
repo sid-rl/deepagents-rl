@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable, Callabl
 from langgraph.types import Command
 from langchain.tools import ToolRuntime
 
+if TYPE_CHECKING:
+    # TypedDicts for structured returns
+    from deepagents.backends.utils import FileInfo, GrepMatch
 
 @runtime_checkable
 class _BackendProtocol(Protocol):
@@ -25,18 +28,7 @@ class _BackendProtocol(Protocol):
     }
     """
     
-    def ls(self, path: str) -> list[str]:
-        """List all file paths in a directory.
-        
-        Args:
-            path: Absolute path to directory (e.g., "/", "/subdir/", "/memories/")
-        
-        Returns:
-            List of absolute file paths in the specified directory.
-        """
-        ...
-
-    def ls_info(self, path: str) -> list[dict]:
+    def ls_info(self, path: str) -> list["FileInfo"]:
         """Structured listing with file metadata.
 
         Returns a list of FileInfo-like dicts: at minimum includes "path";
@@ -65,62 +57,35 @@ class _BackendProtocol(Protocol):
         ...
 
     
-    def grep(
-        self,
-        pattern: str,
-        path: Optional[str] = None,
-        glob: Optional[str] = None,
-        output_mode: str = "files_with_matches",
-    ) -> str:
-        """Search for a pattern in files.
-        
-        TODO: This implementation is significantly less capable than Claude Code's Grep tool.
-        Missing features to add in the future:
-        - Context lines: -A (after), -B (before), -C (context) parameters
-        - Line numbers: -n parameter to show line numbers in output
-        - Case sensitivity: -i parameter for case-insensitive search
-        - Output limiting: head_limit parameter for large result sets
-        - File type filter: type parameter (e.g., "py", "js")
-        - Multiline support: multiline parameter for cross-line pattern matching
-        - Pattern semantics: Clarify if pattern is regex or literal string
-        See /memories/memory_backend_vs_claude_code_comparison.md for full details.
-        
-        Args:
-            pattern: String pattern to search for (currently literal string)
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"
-                - files_with_matches: List file paths that contain matches
-                - content: Show matching lines with file paths and line numbers
-                - count: Show count of matches per file
-        
-        Returns:
-            Formatted search results based on output_mode, or message if no matches found.
-        """
-        ...
-
     def grep_raw(
         self,
         pattern: str,
         path: Optional[str] = None,
         glob: Optional[str] = None,
-    ) -> list[dict] | str:
+    ) -> list["GrepMatch"] | str:
         """Structured search results.
 
-        Returns a list of GrepMatch-like dicts {path, line, text}, or an error string
-        for invalid regex. Prefer this for composition; use grep() for user output.
+        Returns a list of GrepMatch-like dicts {path, line, text} on success,
+        or a string when the input is invalid (e.g., invalid regex pattern) or a
+        backend needs to surface a user-actionable error without throwing.
+
+        Rationale for union return type:
+        - Tool contexts generally prefer non-throwing backends; returning a
+          string preserves error information end-to-end instead of raising and
+          losing context at tool boundaries.
+        - Backends may rely on external engines (e.g., ripgrep) and need to
+          propagate their validation errors verbatim.
+        - Normal "no matches" is represented as an empty list; only input/
+          validation errors use the string form.
+
+        Prefer this method for composition and apply formatting at the tool layer.
         """
         ...
     
-    def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern.
+    def glob_info(self, pattern: str, path: str = "/") -> list["FileInfo"]:
+        """Structured glob matching.
 
-        Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default: "/")
-
-        Returns:
-            List of absolute file paths matching the pattern.
+        Returns a list of dicts with at least {"path"}; may include extra fields.
         """
         ...
 

@@ -27,6 +27,8 @@ from deepagents.backends.state import StateBackendProvider
 from deepagents.backends.utils import (
     create_file_data,
     format_content_with_line_numbers,
+    format_grep_matches,
+    truncate_if_too_long,
 )
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -247,8 +249,8 @@ def _ls_tool_generator(
     def ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> list[str]:
         resolved_backend = _get_backend(backend, runtime)
         validated_path = _validate_path(path)
-        files = resolved_backend.ls(validated_path)
-        return files
+        infos = resolved_backend.ls_info(validated_path)
+        return [fi.get("path", "") for fi in infos]
 
     return ls
 
@@ -359,7 +361,8 @@ def _glob_tool_generator(
     @tool(description=tool_description)
     def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState], path: str = "/") -> list[str]:
         resolved_backend = _get_backend(backend, runtime)
-        return resolved_backend.glob(pattern, path=path)
+        infos = resolved_backend.glob_info(pattern, path=path)
+        return [fi.get("path", "") for fi in infos]
 
     return glob
 
@@ -388,7 +391,11 @@ def _grep_tool_generator(
         output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
     ) -> str:
         resolved_backend = _get_backend(backend, runtime)
-        return resolved_backend.grep(pattern, path=path, glob=glob, output_mode=output_mode)
+        raw = resolved_backend.grep_raw(pattern, path=path, glob=glob)
+        if isinstance(raw, str):
+            return raw
+        formatted = format_grep_matches(raw, output_mode)
+        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
 
     return grep
 

@@ -7,6 +7,7 @@ from langchain.tools import ToolRuntime
 from deepagents.backends.protocol import BackendProtocol, BackendProvider, StateBackendProvider, StateBackendProtocol
 from deepagents.backends.state import StateBackend, StateBackendProvider
 from langgraph.types import Command
+from deepagents.backends.utils import FileInfo, GrepMatch
 
 
 class _CompositeBackend:
@@ -45,25 +46,32 @@ class _CompositeBackend:
         
         return self.default, key
     
-    def ls(self, path: str) -> list[str]:
+    def ls_info(self, path: str) -> list[FileInfo]:
         """List files from backends, with appropriate prefixes.
         
         Args:
             path: Absolute path to directory.
         
         Returns:
-            List of file paths with route prefixes added.
+            List of FileInfo-like dicts with route prefixes added.
         """
         # Check if path matches a specific route
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
                 # Query only the matching routed backend
                 search_path = path[len(route_prefix) - 1:]
-                keys = backend.ls(search_path if search_path else "/")
-                return [f"{route_prefix[:-1]}{key}" for key in keys]
+                infos = backend.ls_info(search_path if search_path else "/")
+                prefixed: list[FileInfo] = []
+                for fi in infos:
+                    fi = dict(fi)
+                    fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
+                    prefixed.append(fi)
+                return prefixed
         
         # Path doesn't match a route: query only default backend
-        return self.default.ls(path)
+        return self.default.ls_info(path)
+
+    # Removed legacy ls() convenience to keep lean surface
     
     def read(
         self, 
@@ -82,22 +90,14 @@ class _CompositeBackend:
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.read(stripped_key, offset=offset, limit=limit)
     
-    def grep(
+    # Removed legacy grep() convenience to keep lean surface
+
+    def grep_raw(
         self,
         pattern: str,
         path: Optional[str] = None,
         glob: Optional[str] = None,
-        output_mode: str = "files_with_matches",
-    ) -> str:
-        """Search for a pattern in files, routing to appropriate backend(s).
-        
-        Args:
-            pattern: String pattern to search for
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
-            Formatted search results based on output_mode.
-        """
+    ) -> list[GrepMatch] | str:
         # If path targets a specific route, search only that backend
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
@@ -105,15 +105,10 @@ class _CompositeBackend:
                 raw = backend.grep_raw(pattern, search_path if search_path else "/", glob)
                 if isinstance(raw, str):
                     return raw
-                if not raw:
-                    return f"No matches found for pattern: '{pattern}'"
-                prefixed = [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
-                from .utils import format_grep_matches, truncate_if_too_long  # lazy import
-                formatted = format_grep_matches(prefixed, output_mode)
-                return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+                return [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
 
         # Otherwise, search default and all routed backends and merge
-        all_matches: list[dict] = []
+        all_matches: list[GrepMatch] = []
         raw_default = self.default.grep_raw(pattern, path, glob)  # type: ignore[attr-defined]
         if isinstance(raw_default, str):
             return raw_default
@@ -125,39 +120,31 @@ class _CompositeBackend:
                 return raw
             all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
 
-        from .utils import format_grep_matches, truncate_if_too_long
-        formatted = format_grep_matches(all_matches, output_mode)
-        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+        return all_matches
     
-    def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern across all backends.
-
-        Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")Returns:
-            List of absolute file paths matching the pattern.
-        """
-        results = []
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        results: list[FileInfo] = []
 
         # Route based on path, not pattern
         for route_prefix, backend in self.sorted_routes:
             if path.startswith(route_prefix.rstrip("/")):
-                # Path matches a specific route - search only that backend
                 search_path = path[len(route_prefix) - 1:]
-                matches = backend.glob(pattern, search_path if search_path else "/")
-                results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
-                return sorted(results)
+                infos = backend.glob_info(pattern, search_path if search_path else "/")
+                return [
+                    {**fi, "path": f"{route_prefix[:-1]}{fi['path']}"}
+                    for fi in infos
+                ]
 
         # Path doesn't match any specific route - search default backend AND all routed backends
-        default_matches = self.default.glob(pattern, path)
-        results.extend(default_matches)
+        results.extend(self.default.glob_info(pattern, path))
 
-        # Also search in all routed backends and prefix results
         for route_prefix, backend in self.routes.items():
-            matches = backend.glob(pattern, "/")
-            results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
+            infos = backend.glob_info(pattern, "/")
+            results.extend({**fi, "path": f"{route_prefix[:-1]}{fi['path']}"} for fi in infos)
 
-        return sorted(results)
+        # Deterministic ordering
+        results.sort(key=lambda x: x.get("path", ""))
+        return results
 
 
 class CompositeStateBacked(_CompositeBackend):

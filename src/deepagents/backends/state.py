@@ -14,11 +14,10 @@ from .utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
-    truncate_if_too_long,
     _glob_search_files,
     grep_matches_from_files,
-    format_grep_matches,
 )
+from deepagents.backends.utils import FileInfo, GrepMatch
 
 
 class StateBackend:
@@ -39,7 +38,7 @@ class StateBackend:
         Args:"""
         self.runtime = runtime
     
-    def ls_info(self, path: str) -> list[dict]:
+    def ls_info(self, path: str) -> list[FileInfo]:
         """List files from state.
         
         Args:
@@ -49,7 +48,7 @@ class StateBackend:
             List of FileInfo-like dicts.
         """
         files = self.runtime.state.get("files", {})
-        infos: list[dict] = []
+        infos: list[FileInfo] = []
         for k, fd in files.items():
             if not k.startswith(path):
                 continue
@@ -63,9 +62,7 @@ class StateBackend:
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
 
-    def ls(self, path: str) -> list[str]:
-        infos = self.ls_info(path)
-        return [fi["path"] for fi in infos]
+    # Removed legacy ls() convenience to keep lean surface
     
     def read(
         self, 
@@ -165,52 +162,34 @@ class StateBackend:
             }
         )
     
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        glob: Optional[str] = None,
-        output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
-    ) -> str:
-        """Search for a pattern in files.
-        
-        Args:
-            pattern: String pattern to search for
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
-            Formatted search results based on output_mode.
-        """
-        files = self.runtime.state.get("files", {})
-        matches_or_err = grep_matches_from_files(files, pattern, path, glob)
-        if isinstance(matches_or_err, str):
-            return matches_or_err
-        formatted = format_grep_matches(matches_or_err, output_mode)
-        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+    # Removed legacy grep() convenience to keep lean surface
 
     def grep_raw(
         self,
         pattern: str,
         path: str = "/",
         glob: Optional[str] = None,
-    ) -> list[dict] | str:
+    ) -> list[GrepMatch] | str:
         files = self.runtime.state.get("files", {})
         return grep_matches_from_files(files, pattern, path, glob)
     
-    def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern.
-        
-        Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")Returns:
-            List of absolute file paths matching the pattern.
-        """
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
         files = self.runtime.state.get("files", {})
-        
         result = _glob_search_files(files, pattern, path)
         if result == "No files found":
             return []
-        return truncate_if_too_long(result.split("\n"))
+        paths = result.split("\n")
+        infos: list[FileInfo] = []
+        for p in paths:
+            fd = files.get(p)
+            size = len("\n".join(fd.get("content", []))) if fd else 0
+            infos.append({
+                "path": p,
+                "is_dir": False,
+                "size": int(size),
+                "modified_at": fd.get("modified_at", "") if fd else "",
+            })
+        return infos
 
 class StateBackendProvider:
 

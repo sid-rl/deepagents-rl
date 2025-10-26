@@ -24,9 +24,9 @@ from .utils import (
     format_content_with_line_numbers,
     perform_string_replacement,
     truncate_if_too_long,
-    format_grep_matches,
 )
 import wcmatch.glob as wcglob
+from deepagents.backends.utils import FileInfo, GrepMatch
 
 
 
@@ -85,7 +85,7 @@ class FilesystemBackend:
             return path
         return (self.cwd / path).resolve()
 
-    def ls_info(self, path: str) -> list[dict]:
+    def ls_info(self, path: str) -> list[FileInfo]:
         """List files from filesystem.
 
         Args:
@@ -98,7 +98,7 @@ class FilesystemBackend:
         if not dir_path.exists() or not dir_path.is_dir():
             return []
 
-        results: list[dict] = []
+        results: list[FileInfo] = []
 
         # Convert cwd to string for comparison
         cwd_str = str(self.cwd)
@@ -154,9 +154,7 @@ class FilesystemBackend:
         results.sort(key=lambda x: x.get("path", ""))
         return results
 
-    def ls(self, path: str) -> list[str]:
-        infos = self.ls_info(path)
-        return [fi["path"] for fi in infos]
+    # Removed legacy ls() convenience to keep lean surface
     
     def read(
         self, 
@@ -287,36 +285,14 @@ class FilesystemBackend:
         except (OSError, UnicodeDecodeError, UnicodeEncodeError) as e:
             return f"Error editing file '{file_path}': {e}"
     
-    def grep(
-        self,
-        pattern: str,
-        path: Optional[str] = None,
-        glob: Optional[str] = None,
-        output_mode: str = "files_with_matches",
-    ) -> str:
-        """Search for a pattern in files (ripgrep with Python fallback).
-
-        Args:
-            pattern: Regex pattern to search for
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"
-
-        Returns:
-            Formatted search results based on output_mode.
-        """
-        matches_or_err = self.grep_raw(pattern, path, glob)
-        if isinstance(matches_or_err, str):
-            return matches_or_err
-        formatted = format_grep_matches(matches_or_err, output_mode)
-        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+    # Removed legacy grep() convenience to keep lean surface
 
     def grep_raw(
         self,
         pattern: str,
         path: Optional[str] = None,
         glob: Optional[str] = None,
-    ) -> list[dict] | str:
+    ) -> list[GrepMatch] | str:
         # Validate regex
         try:
             re.compile(pattern)
@@ -337,7 +313,7 @@ class FilesystemBackend:
         if results is None:
             results = self._python_search(pattern, base_full, glob)
 
-        matches: list[dict] = []
+        matches: list[GrepMatch] = []
         for fpath, items in results.items():
             for line_num, line_text in items:
                 matches.append({"path": fpath, "line": int(line_num), "text": line_text})
@@ -428,48 +404,58 @@ class FilesystemBackend:
 
         return results
     
-    def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern.
-        
-        Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")Returns:
-            List of absolute file paths matching the pattern.
-        """
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
         if pattern.startswith("/"):
             pattern = pattern.lstrip("/")
-        
-        if path == "/":
-            search_path = self.cwd
-        else:
-            search_path = self._resolve_path(path)
-        
+
+        search_path = self.cwd if path == "/" else self._resolve_path(path)
         if not search_path.exists() or not search_path.is_dir():
             return []
-        
-        results = []
-        
+
+        results: list[FileInfo] = []
         try:
             for matched_path in search_path.glob(pattern):
-                if matched_path.is_file():
-                    abs_path = str(matched_path)
-                    if not self.virtual_mode:
-                        results.append(abs_path)
-                        continue
-                    
+                try:
+                    is_file = matched_path.is_file()
+                except OSError:
+                    continue
+                if not is_file:
+                    continue
+                abs_path = str(matched_path)
+                if not self.virtual_mode:
+                    try:
+                        st = matched_path.stat()
+                        results.append({
+                            "path": abs_path,
+                            "is_dir": False,
+                            "size": int(st.st_size),
+                            "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        })
+                    except OSError:
+                        results.append({"path": abs_path, "is_dir": False})
+                else:
                     cwd_str = str(self.cwd)
                     if not cwd_str.endswith("/"):
                         cwd_str += "/"
-                    
                     if abs_path.startswith(cwd_str):
                         relative_path = abs_path[len(cwd_str):]
                     elif abs_path.startswith(str(self.cwd)):
                         relative_path = abs_path[len(str(self.cwd)):].lstrip("/")
                     else:
                         relative_path = abs_path
-                    
-                    results.append("/" + relative_path)
+                    virt = "/" + relative_path
+                    try:
+                        st = matched_path.stat()
+                        results.append({
+                            "path": virt,
+                            "is_dir": False,
+                            "size": int(st.st_size),
+                            "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        })
+                    except OSError:
+                        results.append({"path": virt, "is_dir": False})
         except (OSError, ValueError):
             pass
 
-        return truncate_if_too_long(sorted(results))
+        results.sort(key=lambda x: x.get("path", ""))
+        return results

@@ -16,11 +16,10 @@ from deepagents.backends.utils import (
     file_data_to_string,
     format_read_response,
     perform_string_replacement,
-    truncate_if_too_long,
     _glob_search_files,
     grep_matches_from_files,
-    format_grep_matches,
 )
+from deepagents.backends.utils import FileInfo, GrepMatch
 
 
 class StoreBackend:
@@ -161,7 +160,7 @@ class StoreBackend:
 
         return all_items
     
-    def ls_info(self, path: str) -> list[dict]:
+    def ls_info(self, path: str) -> list[FileInfo]:
         """List files from store.
         
         Args:
@@ -175,7 +174,7 @@ class StoreBackend:
         
         # Search store with path filter
         items = self._search_store_paginated(store, namespace, filter={"prefix": path})
-        infos: list[dict] = []
+        infos: list[FileInfo] = []
         for item in items:
             try:
                 fd = self._convert_store_item_to_file_data(item)
@@ -191,9 +190,7 @@ class StoreBackend:
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
 
-    def ls(self, path: str) -> list[str]:
-        infos = self.ls_info(path)
-        return [fi["path"] for fi in infos]
+    # Removed legacy ls() convenience to keep lean surface
     
     def read(
         self, 
@@ -295,43 +292,14 @@ class StoreBackend:
         
         return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
     
-    def grep(
-        self,
-        pattern: str,
-        path: str = "/",
-        glob: Optional[str] = None,
-        output_mode: str = "files_with_matches",
-    ) -> str:
-        """Search for a pattern in files.
-        
-        Args:
-            pattern: String pattern to search for
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
-            Formatted search results based on output_mode.
-        """
-        store = self._get_store()
-        namespace = self._get_namespace()
-        items = self._search_store_paginated(store, namespace)
-        files: dict[str, Any] = {}
-        for item in items:
-            try:
-                files[item.key] = self._convert_store_item_to_file_data(item)
-            except ValueError:
-                continue
-        matches_or_err = grep_matches_from_files(files, pattern, path, glob)
-        if isinstance(matches_or_err, str):
-            return matches_or_err
-        formatted = format_grep_matches(matches_or_err, output_mode)
-        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+    # Removed legacy grep() convenience to keep lean surface
 
     def grep_raw(
         self,
         pattern: str,
         path: str = "/",
         glob: Optional[str] = None,
-    ) -> list[dict] | str:
+    ) -> list[GrepMatch] | str:
         store = self._get_store()
         namespace = self._get_namespace()
         items = self._search_store_paginated(store, namespace)
@@ -343,33 +311,31 @@ class StoreBackend:
                 continue
         return grep_matches_from_files(files, pattern, path, glob)
     
-    def glob(self, pattern: str, path: str = "/") -> list[str]:
-        """Find files matching a glob pattern.
-        
-        Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default "/")Returns:
-            List of absolute file paths matching the pattern.
-        """
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
         store = self._get_store()
         namespace = self._get_namespace()
-        
         items = self._search_store_paginated(store, namespace)
-        
-        files = {}
+        files: dict[str, Any] = {}
         for item in items:
-            if item is None:
-                continue
             try:
-                file_data = self._convert_store_item_to_file_data(item)
-                files[item.key] = file_data
+                files[item.key] = self._convert_store_item_to_file_data(item)
             except ValueError:
                 continue
-
         result = _glob_search_files(files, pattern, path)
         if result == "No files found":
             return []
-        return truncate_if_too_long(result.split("\n"))
+        paths = result.split("\n")
+        infos: list[FileInfo] = []
+        for p in paths:
+            fd = files.get(p)
+            size = len("\n".join(fd.get("content", []))) if fd else 0
+            infos.append({
+                "path": p,
+                "is_dir": False,
+                "size": int(size),
+                "modified_at": fd.get("modified_at", "") if fd else "",
+            })
+        return infos
 
 
 class StoreBackendProvider:
