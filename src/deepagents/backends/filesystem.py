@@ -257,24 +257,6 @@ class FilesystemBackend:
             return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
         except (OSError, UnicodeDecodeError, UnicodeEncodeError) as e:
             return f"Error editing file '{file_path}': {e}"
-
-    def delete(self, file_path: str) -> Command | None:
-        """Delete file from filesystem.
-
-        Args:
-            file_path: File path to delete (absolute or relative to cwd)Returns:
-            None (direct filesystem modification)
-        """
-        resolved_path = self._resolve_path(file_path)
-
-        if resolved_path.exists() and resolved_path.is_file():
-            try:
-                os.unlink(resolved_path)
-            except OSError:
-                # Fallback if unlink fails
-                resolved_path.unlink()
-        
-        return None
     
     def grep(
         self,

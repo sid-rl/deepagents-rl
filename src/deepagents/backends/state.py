@@ -150,26 +150,6 @@ class StateBackend:
             }
         )
     
-    def delete(self, file_path: str) -> Command | None:
-        """Delete file from state via Command.
-        
-        Args:
-            file_path: File path to deleteReturns:
-            Command object to update state (sets file to None for deletion).
-        """
-        tool_call_id = self.runtime.tool_call_id
-        return Command(
-            update={
-                "files": {file_path: None},
-                "messages": [
-                    ToolMessage(
-                        content=f"Deleted file {file_path}",
-                        tool_call_id=tool_call_id,
-                    )
-                ],
-            }
-        )
-    
     def grep(
         self,
         pattern: str,

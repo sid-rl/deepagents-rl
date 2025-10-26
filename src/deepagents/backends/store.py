@@ -277,19 +277,6 @@ class StoreBackend:
         
         return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
     
-    def delete(self, file_path: str) -> Command | None:
-        """Delete file from store.
-        
-        Args:
-            file_path: File path to deleteReturns:
-            None (direct store modification)
-        """
-        store = self._get_store()
-        namespace = self._get_namespace()
-        store.delete(namespace, file_path)
-        
-        return None
-    
     def grep(
         self,
         pattern: str,

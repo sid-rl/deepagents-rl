@@ -16,7 +16,10 @@ class _CompositeBackend:
         default: BackendProtocol | StateBackend,
         routes: dict[str, BackendProtocol],
     ) -> None:
+        # Default backend
         self.default = default
+
+        # Virtual routes
         self.routes = routes
         
         # Sort routes by length (longest first) for correct prefix matching
@@ -78,16 +81,6 @@ class _CompositeBackend:
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.read(stripped_key, offset=offset, limit=limit)
-    
-    def delete(self, file_path: str) -> Command | None:
-        """Delete file, routing to appropriate backend.
-        
-        Args:
-            file_path: File path to deleteReturns:
-            Return value from backend (None or Command).
-        """
-        backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.delete(stripped_key)
     
     def grep(
         self,
