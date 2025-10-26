@@ -14,7 +14,7 @@ from langchain.agents.middleware.types import (
 )
 from typing_extensions import NotRequired, TypedDict
 
-from deepagents.memory.protocol import MemoryBackend
+from deepagents.memory.protocol import BackendProtocol
 
 
 class AgentMemoryState(AgentState):
@@ -101,7 +101,7 @@ class AgentMemoryMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        backend: MemoryBackend,
+        backend: BackendProtocol,
         memory_path: str,
         system_prompt_template: str | None = None,
     ) -> None:

@@ -1,6 +1,6 @@
 """Protocol definition for pluggable memory backends.
 
-This module defines the MemoryBackend protocol that all backend implementations
+This module defines the BackendProtocol that all backend implementations
 must follow. Backends can store files in different locations (state, filesystem,
 database, etc.) and provide a uniform interface for file operations.
 """
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class MemoryBackend(Protocol):
+class BackendProtocol(Protocol):
     """Protocol for pluggable memory backends.
 
     Backends can store files in different locations (state, filesystem, database, etc.)

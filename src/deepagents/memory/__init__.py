@@ -6,10 +6,10 @@ from deepagents.memory.backends import (
     StateBackend,
     StoreBackend,
 )
-from deepagents.memory.protocol import MemoryBackend
+from deepagents.memory.protocol import BackendProtocol
 
 __all__ = [
-    "MemoryBackend",
+    "BackendProtocol",
     "CompositeBackend",
     "FilesystemBackend",
     "StateBackend",

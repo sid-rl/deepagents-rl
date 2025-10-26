@@ -5,7 +5,7 @@ from typing import Any, Literal, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
 
-from deepagents.memory.protocol import MemoryBackend
+from deepagents.memory.protocol import BackendProtocol
 from langgraph.types import Command
 
 
@@ -34,8 +34,8 @@ class CompositeBackend:
     
     def __init__(
         self,
-        default: MemoryBackend,
-        routes: dict[str, MemoryBackend],
+        default: BackendProtocol,
+        routes: dict[str, BackendProtocol],
     ) -> None:
         """Initialize composite backend with routing rules.
         
@@ -57,7 +57,7 @@ class CompositeBackend:
         # Sort routes by length (longest first) for correct prefix matching
         self.sorted_routes = sorted(routes.items(), key=lambda x: len(x[0]), reverse=True)
 
-    def _get_backend_and_key(self, key: str) -> tuple[MemoryBackend, str]:
+    def _get_backend_and_key(self, key: str) -> tuple[BackendProtocol, str]:
         """Determine which backend handles this key and strip prefix.
         
         Args:

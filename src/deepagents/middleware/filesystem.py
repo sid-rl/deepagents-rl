@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.memory.protocol import MemoryBackend
+from deepagents.memory.protocol import BackendProtocol
 from deepagents.memory.backends import StateBackend
 from deepagents.memory.backends.utils import (
     create_file_data,
@@ -220,7 +220,7 @@ All file paths must start with a /.
 
 
 def _ls_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the ls (list files) tool.
@@ -246,7 +246,7 @@ def _ls_tool_generator(
 
 
 def _read_file_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the read_file tool.
@@ -275,7 +275,7 @@ def _read_file_tool_generator(
 
 
 def _write_file_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the write_file tool.
@@ -303,7 +303,7 @@ def _write_file_tool_generator(
 
 
 def _edit_file_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the edit_file tool.
@@ -334,7 +334,7 @@ def _edit_file_tool_generator(
 
 
 def _glob_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the glob tool.
@@ -357,7 +357,7 @@ def _glob_tool_generator(
 
 
 def _grep_tool_generator(
-    backend: MemoryBackend | Callable[[ToolRuntime], MemoryBackend],
+    backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
 ) -> BaseTool:
     """Generate the grep tool.
@@ -396,7 +396,7 @@ TOOL_GENERATORS = {
 
 
 def _get_filesystem_tools(
-    backend: MemoryBackend,
+    backend: BackendProtocol,
     custom_tool_descriptions: dict[str, str] | None = None,
 ) -> list[BaseTool]:
     """Get filesystem tools.
@@ -432,7 +432,7 @@ class FilesystemMiddleware(AgentMiddleware):
 
     This middleware adds six filesystem tools to the agent: ls, read_file, write_file,
     edit_file, glob, and grep. Files can be stored using any backend that implements
-    the MemoryBackend protocol.
+    the BackendProtocol.
 
     Args:
         memory_backend: Backend for file storage. If not provided, defaults to StateBackend
@@ -465,7 +465,7 @@ class FilesystemMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        memory_backend: MemoryBackend | None = None,
+        memory_backend: BackendProtocol | None = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
