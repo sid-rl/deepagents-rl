@@ -1,43 +1,11 @@
-from typing import Literal, NotRequired, Protocol, TypedDict
+"""An LLM oriented interface for working with files efficiently."""
+
+from typing import Protocol
+
+from deepagents.backends.fs import FileInfo
 
 
-class FileSystemCapabilities(TypedDict):
-    """Filesystem capabilities of the sandbox."""
-
-    can_upload: bool
-    """Whether the sandbox can upload files."""
-    can_download: bool
-    """Whether the sandbox can download files."""
-    can_list_files: bool
-    """Whether the sandbox can list files."""
-    can_read: bool
-    """Whether the sandbox can read file contents."""
-    can_edit: bool
-    """Whether the sandbox can edit files."""
-    can_delete: bool
-    """Whether the sandbox can delete files."""
-    can_grep: bool
-    """Whether the sandbox can search file contents."""
-    can_glob: bool
-    """Whether the sandbox can find files by pattern."""
-
-
-class FileInfo(TypedDict):
-    """Information about the file."""
-
-    path: str
-    """Fully qualified file name (absolute path)."""
-    kind: NotRequired[Literal["file", "dir"]]
-    """Whether the file is a directory."""
-    size: NotRequired[int]
-    """Size of the file in bytes."""
-    created_at: NotRequired[str]
-    """Modification time in ISO format."""
-    modified_at: NotRequired[str]
-    """Creation time in ISO format."""
-
-
-class FileSystem(Protocol):
+class MemoryBackend(Protocol):
     """Protocol for pluggable memory backends.
 
     Backends can store files in different locations (state, filesystem, database, etc.)
@@ -55,14 +23,6 @@ class FileSystem(Protocol):
             List of absolute file paths matching the prefix.
         """
         ...
-
-    def upload_file(self, file: bytes, path: str, *, timeout: int = 30 * 60) -> None:
-        """Upload a file to the sandbox."""
-        raise NotImplementedError
-
-    def download_file(self, path: str, *, timeout: int = 30 * 60) -> bytes:
-        """Download a file from the sandbox."""
-        raise NotImplementedError
 
     def read(
         self,
@@ -84,6 +44,26 @@ class FileSystem(Protocol):
         """
         ...
 
+    def write(
+        self,
+        file_path: str,
+        content: str,
+    ) -> str:
+        """Create a new file with content.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            content: File content as a string
+
+        Returns:
+            - Command object for StateBackend (uses_state=True) to update LangGraph state
+            - Success message string for other backends, or error if file already exists
+
+        Error cases:
+            - Returns error message if file already exists (should use edit instead)
+        """
+        ...
+
     def edit(
         self,
         file_path: str,
@@ -98,6 +78,7 @@ class FileSystem(Protocol):
             old_string: String to find and replace
             new_string: Replacement string
             replace_all: If True, replace all occurrences; if False, require unique match
+            runtime: Optional ToolRuntime to access state (required for StateBackend).
 
         Returns:
             - Command object for StateBackend (uses_state=True) to update LangGraph state
@@ -116,7 +97,6 @@ class FileSystem(Protocol):
 
         Args:
             file_path: Absolute file path to delete
-            runtime: Optional ToolRuntime to access state (required for StateBackend).
 
         Returns:
             - None for backends that modify storage directly (uses_state=False)
@@ -157,9 +137,4 @@ class FileSystem(Protocol):
         Returns:
             List of absolute file paths matching the pattern.
         """
-        ...
-
-    @property
-    def get_capabilities(self) -> FileSystemCapabilities:
-        """Get the filesystem capabilities."""
         ...
