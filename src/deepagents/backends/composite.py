@@ -2,55 +2,20 @@
 
 from typing import Any, Literal, Optional, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from langchain.tools import ToolRuntime
+from langchain.tools import ToolRuntime
 
-from deepagents.memory.protocol import BackendProtocol
+from deepagents.backends.protocol import BackendProtocol, BackendProvider, StateBackendProvider, StateBackendProtocol
+from deepagents.backends.state import StateBackend, StateBackendProvider
 from langgraph.types import Command
 
 
-class CompositeBackend:
-    """Backend that routes operations to different backends based on path prefix.
-    
-    This backend enables hybrid storage strategies, such as:
-    - Short-term files (/*) → StateBackend (ephemeral)
-    - Long-term files (/memories/*) → StoreBackend or FilesystemBackend (persistent)
-    
-    The routing is transparent to tools - they just call backend.get(path) and
-    CompositeBackend handles the routing internally.
-    
-    Example:
-        ```python
-        # Create a factory function that returns CompositeBackend with resolved backends
-        backend_factory = lambda runtime: CompositeBackend(
-            default=StateBackend(runtime),  # StateBackend needs runtime
-            routes={"/memories/": FilesystemBackend("/data/memories")}  # FilesystemBackend doesn't
-        )
-        
-        # Then pass this factory to the middleware
-        middleware = FilesystemMiddleware(memory_backend=backend_factory)
-        ```
-    """
+class _CompositeBackend:
     
     def __init__(
         self,
-        default: BackendProtocol,
+        default: BackendProtocol | StateBackend,
         routes: dict[str, BackendProtocol],
     ) -> None:
-        """Initialize composite backend with routing rules.
-        
-        Args:
-            default: Default backend for paths that don't match any route (must be resolved backend instance).
-            routes: Dict mapping path prefixes to backends (must be resolved backend instances). 
-                   Keys should include trailing slash (e.g., "/memories/").
-        
-        Note: If you need backends that require runtime (like StateBackend), wrap the CompositeBackend
-        itself in a factory function:
-            lambda runtime: CompositeBackend(
-                default=StateBackend(runtime),
-                routes={"/memories/": FilesystemBackend("./data")}
-            )
-        """
         self.default = default
         self.routes = routes
         
@@ -113,40 +78,6 @@ class CompositeBackend:
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.read(stripped_key, offset=offset, limit=limit)
-    
-    def write(
-        self, 
-        file_path: str,
-        content: str,
-    ) -> Command | str:
-        """Create a new file, routing to appropriate backend.
-        
-        Args:
-            file_path: Absolute file path
-            content: File content as a stringReturns:
-            Success message or Command object, or error if file already exists.
-        """
-        backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.write(stripped_key, content)
-    
-    def edit(
-        self, 
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> Command | str:
-        """Edit a file, routing to appropriate backend.
-        
-        Args:
-            file_path: Absolute file path
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrencesReturns:
-            Success message or Command object, or error message on failure.
-        """
-        backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
     
     def delete(self, file_path: str) -> Command | None:
         """Delete file, routing to appropriate backend.
@@ -248,3 +179,100 @@ class CompositeBackend:
             results.extend(f"{route_prefix[:-1]}{match}" for match in matches)
 
         return sorted(results)
+
+
+class CompositeStateBacked(_CompositeBackend):
+
+    def __init__(
+            self,
+            default: StateBackend,
+            routes: dict[str, BackendProtocol],
+    ) -> None:
+        self.default = default
+        self.routes = routes
+
+        # Sort routes by length (longest first) for correct prefix matching
+        self.sorted_routes = sorted(routes.items(), key=lambda x: len(x[0]), reverse=True)
+
+    def write(
+            self,
+            file_path: str,
+            content: str,
+    ) -> Command | str:
+        """Create a new file, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path
+            content: File content as a stringReturns:
+            Success message or Command object, or error if file already exists.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.write(stripped_key, content)
+
+    def edit(
+            self,
+            file_path: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrencesReturns:
+            Success message or Command object, or error message on failure.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+
+
+class CompositeBackend(_CompositeBackend):
+    def write(
+            self,
+            file_path: str,
+            content: str,
+    ) -> str:
+        """Create a new file, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path
+            content: File content as a stringReturns:
+            Success message or Command object, or error if file already exists.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.write(stripped_key, content)
+
+    def edit(
+            self,
+            file_path: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+    ) -> str:
+        """Edit a file, routing to appropriate backend.
+
+        Args:
+            file_path: Absolute file path
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrencesReturns:
+            Success message or Command object, or error message on failure.
+        """
+        backend, stripped_key = self._get_backend_and_key(file_path)
+        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+
+class CompositeStateBackendProvider(StateBackendProvider):
+
+    def __init__(self, routes: dict[str, BackendProtocol | BackendProvider]):
+        self.routes = routes
+
+    def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
+        return CompositeStateBacked(
+            default=StateBackendProvider.get_backend(runtime),
+            routes={
+                k: v if isinstance(v, BackendProtocol) else v.get_backend(runtime) for k,v in self.routes.items()
+            }
+        )

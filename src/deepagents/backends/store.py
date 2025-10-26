@@ -10,7 +10,7 @@ from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
 from langgraph.types import Command
 
-from deepagents.memory.backends.utils import (
+from deepagents.backends.utils import (
     create_file_data,
     update_file_data,
     file_data_to_string,

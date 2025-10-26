@@ -7,13 +7,11 @@ database, etc.) and provide a uniform interface for file operations.
 
 from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
 from langgraph.types import Command
-
-if TYPE_CHECKING:
-    from langchain.tools import ToolRuntime
+from langchain.tools import ToolRuntime
 
 
 @runtime_checkable
-class BackendProtocol(Protocol):
+class _BackendProtocol(Protocol):
     """Protocol for pluggable memory backends.
 
     Backends can store files in different locations (state, filesystem, database, etc.)
@@ -55,53 +53,6 @@ class BackendProtocol(Protocol):
             Formatted file content with line numbers (cat -n style), or error message.
             Returns "Error: File '{file_path}' not found" if file doesn't exist.
             Returns "System reminder: File exists but has empty contents" for empty files.
-        """
-        ...
-    
-    def write(
-        self, 
-        file_path: str,
-        content: str,
-    ) -> Command | str:
-        """Create a new file with content.
-        
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
-        
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error if file already exists
-        
-        Error cases:
-            - Returns error message if file already exists (should use edit instead)
-        """
-        ...
-    
-    def edit(
-        self, 
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> Command | str:
-        """Edit a file by replacing string occurrences.
-        
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
-        
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error message on failure
-            
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
         """
         ...
 
@@ -150,4 +101,118 @@ class BackendProtocol(Protocol):
         Returns:
             List of absolute file paths matching the pattern.
         """
+        ...
+
+
+class BackendProtocol(_BackendProtocol):
+    def write(
+            self,
+            file_path: str,
+            content: str,
+    ) -> str:
+        """Create a new file with content.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            content: File content as a string
+
+        Returns:
+            - Command object for StateBackend (uses_state=True) to update LangGraph state
+            - Success message string for other backends, or error if file already exists
+
+        Error cases:
+            - Returns error message if file already exists (should use edit instead)
+        """
+        ...
+
+    def edit(
+            self,
+            file_path: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+    ) -> str:
+        """Edit a file by replacing string occurrences.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences; if False, require unique match
+
+        Returns:
+            - Command object for StateBackend (uses_state=True) to update LangGraph state
+            - Success message string for other backends, or error message on failure
+
+        Error cases:
+            - "Error: File '{file_path}' not found" if file doesn't exist
+            - "Error: String not found in file: '{old_string}'" if string not found
+            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
+              if multiple matches found and replace_all=False
+        """
+        ...
+
+
+@runtime_checkable
+class BackendProvider(Protocol):
+
+    def get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
+        """Get the backend."""
+        ...
+
+
+class StateBackendProtocol(_BackendProtocol):
+
+    def write(
+            self,
+            file_path: str,
+            content: str,
+    ) -> Command | str:
+        """Create a new file with content.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            content: File content as a string
+
+        Returns:
+            - Command object for StateBackend (uses_state=True) to update LangGraph state
+            - Success message string for other backends, or error if file already exists
+
+        Error cases:
+            - Returns error message if file already exists (should use edit instead)
+        """
+        ...
+
+    def edit(
+            self,
+            file_path: str,
+            old_string: str,
+            new_string: str,
+            replace_all: bool = False,
+    ) -> Command | str:
+        """Edit a file by replacing string occurrences.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences; if False, require unique match
+
+        Returns:
+            - Command object for StateBackend (uses_state=True) to update LangGraph state
+            - Success message string for other backends, or error message on failure
+
+        Error cases:
+            - "Error: File '{file_path}' not found" if file doesn't exist
+            - "Error: String not found in file: '{old_string}'" if string not found
+            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
+              if multiple matches found and replace_all=False
+        """
+        ...
+
+@runtime_checkable
+class StateBackendProvider(Protocol):
+
+    def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
+        """Get the backend."""
         ...

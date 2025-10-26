@@ -3,8 +3,7 @@
 import re
 from typing import Any, Literal, Optional, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from langchain.tools import ToolRuntime
+from langchain.tools import ToolRuntime
 
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
@@ -205,3 +204,8 @@ class StateBackend:
         if result == "No files found":
             return []
         return truncate_if_too_long(result.split("\n"))
+
+class StateBackendProvider:
+
+    def get_backend(self, runtime: ToolRuntime):
+        return StateBackend(runtime)

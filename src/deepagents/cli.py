@@ -17,8 +17,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.spinner import Spinner
-from deepagents.memory.backends.filesystem import FilesystemBackend
-from deepagents.memory.backends import CompositeBackend
+from deepagents.backends.filesystem import FilesystemBackend
+from deepagents.backends import CompositeBackend
 from deepagents.middleware.agent_memory import AgentMemoryMiddleware
 from pathlib import Path
 import shutil
@@ -529,7 +529,7 @@ The filesystem backend is currently operating in: `{Path.cwd()}`"""
     agent = create_deep_agent(
         system_prompt=system_prompt,
         tools=tools,
-        memory_backend=backend,
+        backend=backend,
         middleware=agent_middleware,
     ).with_config(config)
     

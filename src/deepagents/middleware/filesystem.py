@@ -21,9 +21,10 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.memory.protocol import BackendProtocol
-from deepagents.memory.backends import StateBackend
-from deepagents.memory.backends.utils import (
+from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, StateBackendProvider, BackendProvider
+from deepagents.backends import StateBackend, CompositeBackend
+from deepagents.backends.state import StateBackendProvider
+from deepagents.backends.utils import (
     create_file_data,
     format_content_with_line_numbers,
 )
@@ -33,6 +34,7 @@ MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
 DEFAULT_READ_OFFSET = 0
 DEFAULT_READ_LIMIT = 2000
+BACKEND_TYPES = BackendProvider | BackendProtocol | StateBackendProtocol | StateBackendProtocol
 
 
 class FileData(TypedDict):
@@ -219,6 +221,13 @@ All file paths must start with a /.
 - grep: search for text within files"""
 
 
+def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> StateBackendProtocol | BackendProtocol:
+    if isinstance(backend, (StateBackendProvider, BackendProvider)):
+        return backend.get(runtime)
+    else:
+        return backend
+
+
 def _ls_tool_generator(
     backend: BackendProtocol | Callable[[ToolRuntime], BackendProtocol],
     custom_description: str | None = None,
@@ -236,8 +245,7 @@ def _ls_tool_generator(
 
     @tool(description=tool_description)
     def ls(runtime: ToolRuntime[None, FilesystemState], path: str) -> list[str]:
-        # Resolve backend if it's a factory function
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         validated_path = _validate_path(path)
         files = resolved_backend.ls(validated_path)
         return files
@@ -267,7 +275,7 @@ def _read_file_tool_generator(
         offset: int = DEFAULT_READ_OFFSET,
         limit: int = DEFAULT_READ_LIMIT,
     ) -> str:
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         file_path = _validate_path(file_path)
         return resolved_backend.read(file_path, offset=offset, limit=limit)
 
@@ -295,7 +303,7 @@ def _write_file_tool_generator(
         content: str,
         runtime: ToolRuntime[None, FilesystemState],
     ) -> Command | str:
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         file_path = _validate_path(file_path)
         return resolved_backend.write(file_path, content)
 
@@ -326,7 +334,7 @@ def _edit_file_tool_generator(
         *,
         replace_all: bool = False,
     ) -> Command | str:
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         file_path = _validate_path(file_path)
         return resolved_backend.edit(file_path, old_string, new_string, replace_all=replace_all)
 
@@ -350,7 +358,7 @@ def _glob_tool_generator(
 
     @tool(description=tool_description)
     def glob(pattern: str, runtime: ToolRuntime[None, FilesystemState], path: str = "/") -> list[str]:
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         return resolved_backend.glob(pattern, path=path)
 
     return glob
@@ -379,7 +387,7 @@ def _grep_tool_generator(
         glob: str | None = None,
         output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
     ) -> str:
-        resolved_backend = backend(runtime) if callable(backend) else backend
+        resolved_backend = _get_backend(backend, runtime)
         return resolved_backend.grep(pattern, path=path, glob=glob, output_mode=output_mode)
 
     return grep
@@ -465,7 +473,7 @@ class FilesystemMiddleware(AgentMiddleware):
     def __init__(
         self,
         *,
-        memory_backend: BackendProtocol | None = None,
+        backend: BACKEND_TYPES | None = None,
         system_prompt: str | None = None,
         custom_tool_descriptions: dict[str, str] | None = None,
         tool_token_limit_before_evict: int | None = 20000,
@@ -481,7 +489,7 @@ class FilesystemMiddleware(AgentMiddleware):
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
 
         # Use provided backend or default to StateBackend factory
-        self.backend = memory_backend if memory_backend is not None else (lambda runtime: StateBackend(runtime))
+        self.backend = backend if backend is not None else StateBackendProvider()
 
         # Set system prompt (allow full override)
         self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT
