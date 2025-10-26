@@ -1,7 +1,16 @@
-"""FilesystemBackend: Read and write files directly from the filesystem."""
+"""FilesystemBackend: Read and write files directly from the filesystem.
+
+Security and search upgrades:
+- Secure path resolution with root containment when in virtual_mode (sandboxed to cwd)
+- Prevent symlink-following on file I/O using O_NOFOLLOW when available
+- Ripgrep-powered grep with JSON parsing, plus Python fallback with regex
+  and optional glob include filtering, while preserving virtual path behavior
+"""
 
 import os
 import re
+import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
@@ -10,7 +19,13 @@ from langgraph.types import Command
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
 
-from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement
+from .utils import (
+    check_empty_content,
+    format_content_with_line_numbers,
+    perform_string_replacement,
+    _format_grep_results,
+)
+import wcmatch.glob as wcglob
 
 
 class FilesystemBackend:
@@ -24,7 +39,8 @@ class FilesystemBackend:
     def __init__(
         self, 
         root_dir: Optional[str | Path] = None,
-        virtual_mode: bool = False
+        virtual_mode: bool = False,
+        max_file_size_mb: int = 10,
     ) -> None:
         """Initialize filesystem backend.
         
@@ -35,22 +51,37 @@ class FilesystemBackend:
         """
         self.cwd = Path(root_dir) if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
+        self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
 
     def _resolve_path(self, key: str) -> Path:
-        """Resolve a file path relative to cwd if not absolute.
+        """Resolve a file path with security checks.
+
+        When virtual_mode=True, treat incoming paths as virtual absolute paths under
+        self.cwd, disallow traversal (.., ~) and ensure resolved path stays within root.
+        When virtual_mode=False, preserve legacy behavior: absolute paths are allowed
+        as-is; relative paths resolve under cwd.
 
         Args:
-            key: File path (absolute or relative)
+            key: File path (absolute, relative, or virtual when virtual_mode=True)
 
         Returns:
             Resolved absolute Path object
         """
         if self.virtual_mode:
-            return self.cwd / key.lstrip('/')
+            vpath = key if key.startswith("/") else "/" + key
+            if ".." in vpath or vpath.startswith("~"):
+                raise ValueError("Path traversal not allowed")
+            full = (self.cwd / vpath.lstrip("/")).resolve()
+            try:
+                full.relative_to(self.cwd)
+            except ValueError:
+                raise ValueError(f"Path outside root directory: {key}") from None
+            return full
+
         path = Path(key)
         if path.is_absolute():
             return path
-        return self.cwd / path
+        return (self.cwd / path).resolve()
 
     def ls(self, path: str) -> list[str]:
         """List files from filesystem.
@@ -116,8 +147,15 @@ class FilesystemBackend:
             return f"Error: File '{file_path}' not found"
         
         try:
-            with open(resolved_path, "r", encoding="utf-8") as f:
-                content = f.read()
+            # Open with O_NOFOLLOW where available to avoid symlink traversal
+            try:
+                fd = os.open(resolved_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(fd, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except OSError:
+                # Fallback to normal open if O_NOFOLLOW unsupported or fails
+                with open(resolved_path, "r", encoding="utf-8") as f:
+                    content = f.read()
             
             empty_msg = check_empty_content(content)
             if empty_msg:
@@ -155,8 +193,13 @@ class FilesystemBackend:
         try:
             # Create parent directories if needed
             resolved_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(resolved_path, "w", encoding="utf-8") as f:
+
+            # Prefer O_NOFOLLOW to avoid writing through symlinks
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(resolved_path, flags, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
             
             return f"Updated file {file_path}"
@@ -185,8 +228,14 @@ class FilesystemBackend:
             return f"Error: File '{file_path}' not found"
         
         try:
-            with open(resolved_path, "r", encoding="utf-8") as f:
-                content = f.read()
+            # Read securely
+            try:
+                fd = os.open(resolved_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(fd, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except OSError:
+                with open(resolved_path, "r", encoding="utf-8") as f:
+                    content = f.read()
             
             result = perform_string_replacement(content, old_string, new_string, replace_all)
             
@@ -195,7 +244,12 @@ class FilesystemBackend:
             
             new_content, occurrences = result
             
-            with open(resolved_path, "w", encoding="utf-8") as f:
+            # Write securely
+            flags = os.O_WRONLY | os.O_TRUNC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(resolved_path, flags)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(new_content)
             
             return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
@@ -212,76 +266,141 @@ class FilesystemBackend:
         resolved_path = self._resolve_path(file_path)
 
         if resolved_path.exists() and resolved_path.is_file():
-            resolved_path.unlink()
+            try:
+                os.unlink(resolved_path)
+            except OSError:
+                # Fallback if unlink fails
+                resolved_path.unlink()
         
         return None
     
     def grep(
         self,
         pattern: str,
-        path: str = "/",
+        path: Optional[str] = None,
         glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
     ) -> str:
-        """Search for a pattern in files.
-        
+        """Search for a pattern in files (ripgrep with Python fallback).
+
         Args:
-            pattern: String pattern to search for
+            pattern: Regex pattern to search for
             path: Path to search in (default "/")
             glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"Returns:
+            output_mode: Output format - "files_with_matches", "content", or "count"
+
+        Returns:
             Formatted search results based on output_mode.
         """
-        regex = re.compile(re.escape(pattern))
-        
-        if glob:
-            files_to_search = self.glob(glob)
-        else:
-            files_to_search = self.ls(path if path != "/" else None)
-        
-        if path != "/":
-            files_to_search = [f for f in files_to_search if f.startswith(path)]
-        
-        file_matches = {}
-        
-        for fp in files_to_search:
-            resolved_path = self._resolve_path(fp)
-            
-            if not resolved_path.exists() or not resolved_path.is_file():
-                continue
-            
-            try:
-                with open(resolved_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                
-                matches = []
-                for line_num, line in enumerate(lines, start=1):
-                    if regex.search(line):
-                        matches.append((line_num, line.rstrip()))
-                
-                if matches:
-                    file_matches[fp] = matches
-            except (OSError, UnicodeDecodeError):
-                continue
-        
-        if not file_matches:
+        # Validate regex
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            return f"Invalid regex pattern: {e}"
+
+        # Resolve base path
+        try:
+            base_full = self._resolve_path(path or ".")
+        except ValueError:
             return f"No matches found for pattern: '{pattern}'"
-        
-        if output_mode == "files_with_matches":
-            return "\n".join(sorted(file_matches.keys()))
-        elif output_mode == "count":
-            results = []
-            for fp in sorted(file_matches.keys()):
-                count = len(file_matches[fp])
-                results.append(f"{fp}: {count}")
-            return "\n".join(results)
-        else:
-            results = []
-            for fp in sorted(file_matches.keys()):
-                results.append(f"{fp}:")
-                for line_num, line in file_matches[fp]:
-                    results.append(f"  {line_num}: {line}")
-            return "\n".join(results)
+
+        if not base_full.exists():
+            return f"No matches found for pattern: '{pattern}'"
+
+        # Try ripgrep first
+        results = self._ripgrep_search(pattern, base_full, glob)
+        if results is None:
+            results = self._python_search(pattern, base_full, glob)
+
+        if not results:
+            return f"No matches found for pattern: '{pattern}'"
+
+        return _format_grep_results(results, output_mode)
+
+    def _ripgrep_search(
+        self, pattern: str, base_full: Path, include_glob: Optional[str]
+    ) -> Optional[dict[str, list[tuple[int, str]]]]:
+        cmd = ["rg", "--json"]
+        if include_glob:
+            cmd.extend(["--glob", include_glob])
+        cmd.extend(["--", pattern, str(base_full)])
+
+        try:
+            proc = subprocess.run(  # noqa: S603
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return None
+
+        results: dict[str, list[tuple[int, str]]] = {}
+        for line in proc.stdout.splitlines():
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") != "match":
+                continue
+            pdata = data.get("data", {})
+            ftext = pdata.get("path", {}).get("text")
+            if not ftext:
+                continue
+            p = Path(ftext)
+            if self.virtual_mode:
+                try:
+                    virt = "/" + str(p.resolve().relative_to(self.cwd))
+                except Exception:
+                    continue
+            else:
+                virt = str(p)
+            ln = pdata.get("line_number")
+            lt = pdata.get("lines", {}).get("text", "").rstrip("\n")
+            if ln is None:
+                continue
+            results.setdefault(virt, []).append((int(ln), lt))
+
+        return results
+
+    def _python_search(
+        self, pattern: str, base_full: Path, include_glob: Optional[str]
+    ) -> dict[str, list[tuple[int, str]]]:
+        try:
+            regex = re.compile(pattern)
+        except re.error:
+            return {}
+
+        results: dict[str, list[tuple[int, str]]] = {}
+        root = base_full if base_full.is_dir() else base_full.parent
+
+        for fp in root.rglob("*"):
+            if not fp.is_file():
+                continue
+            if include_glob and not wcglob.globmatch(fp.name, include_glob, flags=wcglob.BRACE):
+                continue
+            try:
+                if fp.stat().st_size > self.max_file_size_bytes:
+                    continue
+            except OSError:
+                continue
+            try:
+                content = fp.read_text()
+            except (UnicodeDecodeError, PermissionError, OSError):
+                continue
+            for line_num, line in enumerate(content.splitlines(), 1):
+                if regex.search(line):
+                    if self.virtual_mode:
+                        try:
+                            virt_path = "/" + str(fp.resolve().relative_to(self.cwd))
+                        except Exception:
+                            continue
+                    else:
+                        virt_path = str(fp)
+                    results.setdefault(virt_path, []).append((line_num, line))
+
+        return results
     
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.

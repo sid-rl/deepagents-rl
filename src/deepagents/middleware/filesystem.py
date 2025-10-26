@@ -6,7 +6,7 @@ from typing import Annotated
 from typing_extensions import NotRequired
 
 import os
-from typing import Literal
+from typing import Literal, Optional
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -194,7 +194,7 @@ GREP_TOOL_DESCRIPTION = """Search for a pattern in files.
 Usage:
 - The grep tool searches for text patterns across files
 - The pattern parameter is the text to search for (literal string, not regex)
-- The path parameter filters which directory to search in (default is `/` for all files)
+- The path parameter filters which directory to search in (default is the current working directory)
 - The glob parameter accepts a glob pattern to filter which files to search (e.g., `*.py`)
 - The output_mode parameter controls the output format:
   - `files_with_matches`: List only file paths containing matches (default)
@@ -375,7 +375,7 @@ def _grep_tool_generator(
     def grep(
         pattern: str,
         runtime: ToolRuntime[None, FilesystemState],
-        path: str = "/",
+        path: Optional[str] = None,
         glob: str | None = None,
         output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
     ) -> str:

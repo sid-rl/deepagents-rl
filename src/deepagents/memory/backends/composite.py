@@ -161,7 +161,7 @@ class CompositeBackend:
     def grep(
         self,
         pattern: str,
-        path: str = "/",
+        path: Optional[str] = None,
         glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
     ) -> str:
@@ -175,7 +175,7 @@ class CompositeBackend:
             Formatted search results based on output_mode.
         """
         for route_prefix, backend in self.sorted_routes:
-            if path.startswith(route_prefix.rstrip("/")):
+            if path is not None and path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1:]
                 result = backend.grep(pattern, search_path if search_path else "/", glob, output_mode)
                 if result.startswith("No matches found"):
@@ -192,7 +192,7 @@ class CompositeBackend:
                     else:
                         prefixed_lines.append(line)
                 return "\n".join(prefixed_lines)
-        
+
         all_results = []
         
         default_result = self.default.grep(pattern, path, glob, output_mode)
@@ -200,7 +200,7 @@ class CompositeBackend:
             all_results.append(default_result)
         
         for route_prefix, backend in self.routes.items():
-            result = backend.grep(pattern, "/", glob, output_mode)
+            result = backend.grep(pattern, None, glob, output_mode)
             if not result.startswith("No matches found"):
                 lines = result.split("\n")
                 prefixed_lines = []

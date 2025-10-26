@@ -104,23 +104,12 @@ class MemoryBackend(Protocol):
               if multiple matches found and replace_all=False
         """
         ...
-    
-    def delete(self, file_path: str) -> Command | None:
-        """Delete a file by path.
-        
-        Args:
-            file_path: Absolute file path to delete
-        
-        Returns:
-            - None for backends that modify storage directly (uses_state=False)
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-        """
-        ...
+
     
     def grep(
         self,
         pattern: str,
-        path: str = "/",
+        path: Optional[str] = None,
         glob: Optional[str] = None,
         output_mode: str = "files_with_matches",
     ) -> str:
