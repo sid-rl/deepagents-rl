@@ -449,6 +449,9 @@ class FilesystemMiddleware(AgentMiddleware):
             use CompositeBackend with custom routes.
 =======
         long_term_memory: Whether to enable longterm memory support.
+<<<<<<< HEAD
+>>>>>>> master
+=======
 >>>>>>> master
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
