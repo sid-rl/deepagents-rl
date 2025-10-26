@@ -19,6 +19,7 @@ from langgraph.types import Command
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
 
+<<<<<<< HEAD
 from .utils import (
     check_empty_content,
     format_content_with_line_numbers,
@@ -26,6 +27,9 @@ from .utils import (
     _format_grep_results,
 )
 import wcmatch.glob as wcglob
+=======
+from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement, truncate_if_too_long
+>>>>>>> e0fd94ba77322dd976593f410515178ebd35fdf6
 
 
 class FilesystemBackend:
@@ -125,7 +129,7 @@ class FilesystemBackend:
         except (OSError, PermissionError):
             pass
 
-        return sorted(results)
+        return truncate_if_too_long(sorted(results))
     
     def read(
         self, 
@@ -315,7 +319,7 @@ class FilesystemBackend:
         if not results:
             return f"No matches found for pattern: '{pattern}'"
 
-        return _format_grep_results(results, output_mode)
+        return truncate_if_too_long(_format_grep_results(results, output_mode))
 
     def _ripgrep_search(
         self, pattern: str, base_full: Path, include_glob: Optional[str]
@@ -445,5 +449,5 @@ class FilesystemBackend:
                     results.append("/" + relative_path)
         except (OSError, ValueError):
             pass
-        
-        return sorted(results)
+
+        return truncate_if_too_long(sorted(results))
