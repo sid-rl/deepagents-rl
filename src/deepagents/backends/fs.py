@@ -56,14 +56,6 @@ class FileSystem(Protocol):
         """
         ...
 
-    def upload_file(self, file: bytes, path: str, *, timeout: int = 30 * 60) -> None:
-        """Upload a file to the sandbox."""
-        raise NotImplementedError
-
-    def download_file(self, path: str, *, timeout: int = 30 * 60) -> bytes:
-        """Download a file from the sandbox."""
-        raise NotImplementedError
-
     def read(
         self,
         file_path: str,

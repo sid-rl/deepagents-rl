@@ -17,234 +17,111 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 from langgraph.typing import ContextT
 
-from deepagents.backends.sandbox import SandboxProvider
+from deepagents.backends.sandbox import Sandbox
+from deepagents.backends.fs import FileSystem
 
 
-class SandboxState(AgentState):
-    """State schema for Daytona sandbox middleware."""
 
-    sandbox_id: NotRequired[str]
-
-
-def _get_tools(sandbox_provider: SandboxProvider) -> list[BaseTool]:
-    """Generate tools for interacting with the sandbox.
+def _get_tools(backend: Sandbox | FileSystem) -> list[BaseTool]:
+    """Generate tools for interacting with the backend.
 
     Args:
-        sandbox_provider: The sandbox provider to use.
+        backend: The sandbox or filesystem to use.
 
     Returns:
-        List of tools for sandbox interaction.
+        List of tools for backend interaction.
     """
-    capabilities = sandbox_provider.get_capabilities()
-    tools = []
 
-    fs_capabilities = capabilities["fs"]
 
-    if fs_capabilities["can_read"]:
+    @tool
+    def read(
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> str:
+        """Read a file from the sandbox filesystem."""
+        return backend.read(file_path, offset, limit)
 
-        @tool
-        def read(
-            file_path: str,
-            runtime: ToolRuntime,
-            offset: int = 0,
-            limit: int = 2000,
-        ) -> Command:
-            """Read a file from the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            result = sandbox.fs.read(file_path, offset, limit)
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=result,
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
+    @tool
+    def edit(
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Edit a file in the sandbox filesystem."""
+        return backend.edit(file_path, old_string, new_string, replace_all)
 
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
 
-        tools.append(read)
+    @tool
+    def ls(
+        prefix: str | None = None,
+    ) -> str:
+        """List files in the sandbox filesystem."""
+        return str(backend.ls(prefix))
 
-    if fs_capabilities["can_edit"]:
 
-        @tool
-        def edit(
-            file_path: str,
-            old_string: str,
-            new_string: str,
-            runtime: ToolRuntime,
-            replace_all: bool = False,
-        ) -> Command:
-            """Edit a file in the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            result = sandbox.fs.edit(file_path, old_string, new_string, replace_all)
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=result,
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
+    @tool
+    def write(
+        file_path: str,
+    ) -> str:
+        """Delete a file from the sandbox filesystem."""
+        backend.write(file_path)
+        return f"Successfully deleted {file_path}"
 
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
+    @tool
+    def grep(
+        pattern: str,
+        path: str = "/",
+        include: str | None = None,
+        output_mode: str = "files_with_matches",
+    ) -> str:
+        """Search for a pattern in files in the sandbox filesystem."""
+        return backend.grep(pattern, path, include, output_mode)
 
-        tools.append(edit)
+    @tool
+    def glob(
+        pattern: str,
+        path: str = "/",
+    ) -> str:
+        """Find files matching a glob pattern in the sandbox filesystem."""
+        return str(backend.glob(pattern, path))
 
-    if fs_capabilities["can_list_files"]:
+    @tool
+    def bash(command: str) -> str:
+        """Execute a bash command in the isolated sandbox environment.
 
-        @tool
-        def ls(
-            runtime: ToolRuntime,
-            prefix: str | None = None,
-        ) -> Command:
-            """List files in the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            result = sandbox.fs.ls(prefix)
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=str(result),
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
+        Use this tool to run shell commands, execute scripts, install dependencies,
+        or perform any other bash operations needed to verify the documentation.
 
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
+        Args:
+            command: The bash command to execute (e.g., "python script.py", "pip install requests")
 
-        tools.append(ls)
+        Returns:
+            The output from the command execution, including stdout and stderr.
+        """
+        execute_response = backend.execute(command)
+        return f"Output:\n{execute_response['result']}\nExit Code: {execute_response['exit_code']}"
 
-    if fs_capabilities["can_delete"]:
 
-        @tool
-        def delete(
-            file_path: str,
-            runtime: ToolRuntime,
-        ) -> Command:
-            """Delete a file from the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            sandbox.fs.delete(file_path)
-            result = f"Successfully deleted {file_path}"
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=result,
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
-
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
-
-        tools.append(delete)
-
-    if fs_capabilities["can_grep"]:
-
-        @tool
-        def grep(
-            pattern: str,
-            runtime: ToolRuntime,
-            path: str = "/",
-            include: str | None = None,
-            output_mode: str = "files_with_matches",
-        ) -> Command:
-            """Search for a pattern in files in the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            result = sandbox.fs.grep(pattern, path, include, output_mode)
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=result,
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
-
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
-
-        tools.append(grep)
-
-    if fs_capabilities["can_glob"]:
-
-        @tool
-        def glob(
-            pattern: str,
-            runtime: ToolRuntime,
-            path: str = "/",
-        ) -> Command:
-            """Find files matching a glob pattern in the sandbox filesystem."""
-            sandbox_id = runtime.state.get("sandbox_id")
-            # If None then, the sandbox will be created now
-            created = sandbox_id is None
-            sandbox = sandbox_provider.get_or_create(sandbox_id)
-            result = sandbox.fs.glob(pattern, path)
-            update = {
-                "messages": [
-                    ToolMessage(
-                        content=str(result),
-                        tool_call_id=runtime.tool_call_id,
-                    )
-                ],
-            }
-
-            if created:
-                update["sandbox_id"] = sandbox.id
-            return Command(update=update)
-
-        tools.append(glob)
-
-    return tools
+    return [ls, read, ]
 
 
 class GeneralizedFilesystemMiddleware(AgentMiddleware):
     state_schema = SandboxState
 
     def __init__(
-        self, sandbox_provider: SandboxProvider, *, terminate_on_complete: bool = True, create_on: Literal["start", "usage"] = "start"
+        self, backend: Sandbox | FileSystem
     ) -> None:
         """Initialize the Daytona sandbox middleware."""
-        self.sandbox_provider = sandbox_provider
-        self.terminate_on_complete = terminate_on_complete
-        self.create_on = create_on
+        self.backend = backend
 
-        self.tools = _get_tools(sandbox_provider)
+        self.tools = _get_tools(backend)
 
-    def before_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        if "sandbox_id" not in state and self.create_on == "start":
-            sandbox = self.sandbox_provider.get_or_create()
-            return {"sandbox_id": sandbox.id}
-        return {}
-
-    def after_agent(self, state: StateT, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        """Terminate the sandbox after agent completion if configured to do so."""
-        if sandbox_id := state.get("sandbox_id") and self.terminate_on_complete:
-            self.sandbox_provider.delete(sandbox_id)
-        return None
+    @property
+    def middleware(self):
+        if hasattr(self.backend, "middleware"):
+            return self.backend.middleware
 
 
 class GeneralizedShellMiddleware(AgentMiddleware):
@@ -308,3 +185,4 @@ class GeneralizedShellMiddleware(AgentMiddleware):
             self.sandbox_provider.delete(sandbox_id)
 
         return None
+

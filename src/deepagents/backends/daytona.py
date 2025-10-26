@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Literal
 
-from daytona import CreateSandboxFromSnapshotParams, Daytona, DaytonaConfig, FileUpload
-
-from deepagents.backends.fs import FileInfo, FileSystem, FileSystemCapabilities
-from deepagents.backends.pagination import PageResults, PaginationCursor
-from deepagents.backends.process import ExecuteResponse, Process, ProcessCapabilities
-from deepagents.backends.sandbox import Sandbox, SandboxCapabilities, SandboxMetadata, SandboxProvider
+from deepagents.backends.fs import FileInfo, FileSystemCapabilities
+from deepagents.backends.sandbox import Sandbox, ExecuteResponse
 
 if TYPE_CHECKING:
     from daytona import Sandbox as DaytonaSandboxClient
 
 
-class DaytonaFileSystem(FileSystem):
+class DaytonaSandbox(Sandbox):
     """Daytona filesystem implementation."""
 
     def __init__(self, sandbox: DaytonaSandboxClient) -> None:
@@ -26,7 +21,7 @@ class DaytonaFileSystem(FileSystem):
     def ls(self, prefix: str | None = None) -> list[FileInfo]:
         """List all file paths, optionally filtered by prefix."""
         path = prefix or "/"
-        files = self._sandbox.fs.list_files(path)
+        files = self._sandbox.list_files(path)
 
         result: list[FileInfo] = []
         for file in files:
@@ -44,15 +39,6 @@ class DaytonaFileSystem(FileSystem):
             result.append(file_info)
 
         return result
-
-    def upload_file(self, file: bytes, path: str, *, timeout: int = 30 * 60) -> None:
-        """Upload a file to the sandbox."""
-        uploads = [FileUpload(source=file, destination=path)]
-        self._sandbox.fs.upload_files(uploads, timeout=timeout)
-
-    def download_file(self, path: str, *, timeout: int = 30 * 60) -> bytes:
-        """Download a file from the sandbox."""
-        return self._sandbox.fs.download_file(path, timeout=timeout)
 
     def read(
         self,
@@ -129,6 +115,9 @@ class DaytonaFileSystem(FileSystem):
         """Delete a file by path."""
         return self._sandbox.fs.delete_file(file_path)
 
+    def write(self, ):
+        return self._sandbox.fs.
+
     def grep(
         self,
         pattern: str,
@@ -197,14 +186,6 @@ class DaytonaFileSystem(FileSystem):
             "can_glob": True,
         }
 
-
-class DaytonaProcess(Process):
-    """Daytona process implementation."""
-
-    def __init__(self, sandbox: DaytonaSandboxClient) -> None:
-        """Initialize the DaytonaProcess with a Daytona sandbox client."""
-        self._sandbox = sandbox
-
     def execute(
         self,
         command: str,
@@ -224,148 +205,3 @@ class DaytonaProcess(Process):
             result=response.result,
             exit_code=response.exit_code,
         )
-
-    def get_capabilities(self) -> ProcessCapabilities:
-        """Get the process capabilities."""
-        return {
-            "supports_exec": True,
-        }
-
-
-class DaytonaSandbox(Sandbox):
-    """Daytona sandbox implementation."""
-
-    def __init__(self, sandbox: DaytonaSandboxClient) -> None:
-        """Initialize the DaytonaSandbox with a Daytona sandbox client."""
-        self._sandbox = sandbox
-        self._fs = DaytonaFileSystem(sandbox)
-        self._process = DaytonaProcess(sandbox)
-
-    @property
-    def fs(self) -> FileSystem:
-        """Filesystem backend."""
-        return self._fs
-
-    @property
-    def process(self) -> Process:
-        """Process backend."""
-        return self._process
-
-    @property
-    def get_capabilities(self) -> SandboxCapabilities:
-        """Get the capabilities of the sandbox backend."""
-        return {
-            "fs": self._fs.get_capabilities,
-            "process": self._process.get_capabilities(),
-        }
-
-    @property
-    def id(self) -> str:
-        """Get the sandbox ID."""
-        return self._sandbox.id
-
-
-class DaytonaSandboxProvider(SandboxProvider):
-    """Daytona sandbox provider implementation."""
-
-    def __init__(
-        self,
-        *,
-        client: Daytona | None = None,
-        api_key: str | None = None,
-        auto_stop_minutes: int | None = None,
-        auto_delete_minutes: int | None = None,
-    ) -> None:
-        """Initialize the DaytonaSandboxProvider with a Daytona client.
-
-        Args:
-            client: An existing Daytona client instance
-            api_key: API key for creating a new Daytona client
-            auto_stop_minutes: Minutes of inactivity before sandbox auto-stops. Defaults to 15.
-            auto_delete_minutes: Minutes after stopping before sandbox is deleted. Defaults to 0
-                                (delete immediately on stop).
-        """
-        if client and api_key:
-            raise ValueError("Provide either daytona_client or api_key, not both.")
-
-        if client is None:
-            api_key = api_key or os.environ.get("DAYTONA_API_KEY")
-            if api_key is None:
-                raise ValueError("Either daytona_client or api_key must be provided.")
-            config = DaytonaConfig(api_key=api_key)
-            client = Daytona(config)
-
-        self._client = client
-        self.auto_stop_interval = auto_stop_minutes
-        self.auto_delete_interval = auto_delete_minutes
-
-    def get_or_create(self, id: str | None = None, **kwargs) -> Sandbox:
-        """Get or create a sandbox instance by ID.
-
-        If id is None, creates a new sandbox.
-        If id is provided, retrieves the existing sandbox.
-        """
-        if id is None:
-            # Create a new sandbox with TTL parameters
-            sandbox_client = self._client.create(
-                params=CreateSandboxFromSnapshotParams(
-                    auto_stop_interval=self.auto_stop_interval,
-                    auto_delete_interval=self.auto_delete_interval,
-                )
-            )
-            return DaytonaSandbox(sandbox_client)
-        # Get existing sandbox
-        sandbox_client = self._client.get(id)
-        return DaytonaSandbox(sandbox_client)
-
-    def delete(self, id: str) -> None:
-        """Delete a sandbox instance by ID.
-
-        Do not raise an error if the sandbox does not exist.
-        """
-        try:
-            sandbox = self._client.get(id)
-            self._client.delete(sandbox)
-        except Exception:
-            # Silently ignore if sandbox doesn't exist
-            pass
-
-    def list(self, *, cursor: PaginationCursor | None = None, **kwargs) -> PageResults[SandboxMetadata]:
-        """List all sandbox IDs.
-
-        Note: Daytona's list() method returns a simple list of IDs,
-        so we don't support pagination at the API level.
-        """
-        # Daytona's list returns list[str] of sandbox IDs
-        paginated_sandboxes = self._client.list()
-        items: SandboxMetadata = [{"id": item.id} for item in paginated_sandboxes.items]
-        # Convert to SandboxMetadata format
-        items: list[SandboxMetadata] = items
-
-        # Since Daytona doesn't support pagination, we return all items
-        return PageResults(
-            items=items,
-            cursor=PaginationCursor(
-                next_cursor=None,
-                has_more=False,
-            ),
-        )
-
-    def get_capabilities(self) -> SandboxCapabilities:
-        """Get the capabilities of the sandbox provider."""
-        # We need to make this class methods likely...
-        return {
-            "fs": {
-                "can_upload": True,
-                "can_download": True,
-                "can_list_files": True,
-                "can_read": True,
-                "can_edit": True,
-                "can_delete": False,
-                "can_grep": True,
-                "can_glob": True,
-            },
-            "process": {
-                "supports_exec": True,
-            },
-        }

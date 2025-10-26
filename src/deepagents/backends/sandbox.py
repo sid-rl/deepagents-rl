@@ -1,60 +1,38 @@
 import abc
-from typing import TypedDict
-
-from deepagents.backends.fs import FileSystem, FileSystemCapabilities
-from deepagents.backends.pagination import PageResults, PaginationCursor
-from deepagents.backends.process import Process, ProcessCapabilities
+from deepagents.backends.fs import FileSystem
+from typing import TypedDict, NotRequired
 
 
-class SandboxCapabilities(TypedDict):
-    """Capabilities of the sandbox backend."""
+class ExecuteResponse(TypedDict):
+    """Result of code execution."""
 
-    fs: FileSystemCapabilities
-    process: ProcessCapabilities
-
-
-class Sandbox(abc.ABC):
-    """Abstract class for sandbox backends."""
-
-    id: str | None
-    """Unique identifier for the sandbox if applicable."""
-
-    fs: FileSystem
-    """Filesystem backend."""
-    process: Process
-    """Process backend."""
-
-    @property
-    def get_capabilities(self) -> SandboxCapabilities:
-        """Get the capabilities of the sandbox backend."""
-        raise NotImplementedError
+    result: str
+    """The output of the executed code.
+    This will usually be the standard output of the command executed.
+    """
+    exit_code: NotRequired[int]
+    """The exit code of the executed code, if applicable."""
 
 
-class SandboxMetadata(TypedDict):
-    """Metadata for a sandbox instance."""
-
-    id: str
-    """Unique identifier for the sandbox."""
-
-
-class SandboxProvider(abc.ABC):
-    """Abstract class for sandbox providers."""
+class Sandbox(FileSystem, abc.ABC):
+    """Abstract class for sandbox backends.
+    
+    Extends FileSystem to provide both filesystem and process execution capabilities.
+    """
 
     @abc.abstractmethod
-    def get_or_create(self, id: str | None = None, **kwargs) -> Sandbox:
-        """Get or create a sandbox instance by ID."""
+    def execute(
+        self,
+        command: str,
+        cwd: str | None = None,
+        *,
+        timeout: int = 30 * 60,
+    ) -> ExecuteResponse:
+        """Execute a command in the sandbox.
 
-    @abc.abstractmethod
-    def delete(self, id: str) -> None:
-        """Delete a sandbox instance by ID.
-
-        Do not raise an error if the sandbox does not exist.
+        Args:
+            command: Command to execute as a string.
+            cwd: Working directory to execute the command in.
+            timeout: Maximum execution time in seconds (default: 30 minutes).
         """
-
-    @abc.abstractmethod
-    def list(self, *, cursor: PaginationCursor | None = None, **kwargs) -> PageResults[SandboxMetadata]:
-        """List all sandbox IDs."""
-
-    @abc.abstractmethod
-    def get_capabilities(self) -> SandboxCapabilities:
-        """Get the capabilities of the sandbox provider."""
+        ...
