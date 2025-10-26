@@ -223,7 +223,7 @@ All file paths must start with a /.
 
 def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> StateBackendProtocol | BackendProtocol:
     if isinstance(backend, (StateBackendProvider, BackendProvider)):
-        return backend.get(runtime)
+        return backend.get_backend(runtime)
     else:
         return backend
 

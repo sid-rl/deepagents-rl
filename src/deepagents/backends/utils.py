@@ -180,7 +180,7 @@ def truncate_if_too_long(result: list[str] | str) -> list[str] | str:
         return result
 
 
-def _validate_path(path: str) -> str:
+def _validate_path(path: str | None) -> str:
     """Validate and normalize a path.
     
     Args:
@@ -192,6 +192,7 @@ def _validate_path(path: str) -> str:
     Raises:
         ValueError: If path is invalid
     """
+    path = path or "/"
     if not path or path.strip() == "":
         raise ValueError("Path cannot be empty")
     
@@ -283,7 +284,7 @@ def _format_grep_results(
 def _grep_search_files(
     files: dict[str, Any],
     pattern: str,
-    path: str = "/",
+    path: str | None = None,
     glob: str | None = None,
     output_mode: Literal["files_with_matches", "content", "count"] = "files_with_matches",
 ) -> str:

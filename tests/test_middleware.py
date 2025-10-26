@@ -17,11 +17,17 @@ from deepagents.middleware.filesystem import (
     FilesystemMiddleware,
     FilesystemState,
 )
-from deepagents.backends import StateBackend, StoreBackend, CompositeBackend
+from deepagents.backends import StoreBackend, CompositeBackend
+from deepagents.backends import (
+    CompositeStateBackendProvider,
+    StoreBackendProvider,
+    StateBackendProvider,
+)
+
 from deepagents.backends.utils import create_file_data, update_file_data
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
-
+from deepagents.backends.utils import truncate_if_too_long
 
 class TestAddMiddleware:
     def test_filesystem_middleware(self):
@@ -58,50 +64,47 @@ class TestAddMiddleware:
 class TestFilesystemMiddleware:
     def test_init_default(self):
         middleware = FilesystemMiddleware()
-        assert isinstance(middleware.backend, StateBackend)
+        assert isinstance(middleware.backend, StateBackendProvider)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
     def test_init_with_composite_backend(self):
-        backend = CompositeBackend(
-            default=StateBackend(),
-            routes={"/memories/": StoreBackend()}
+        backend = CompositeStateBackendProvider(
+            routes={"/memories/": StoreBackendProvider()}
         )
-        middleware = FilesystemMiddleware(memory_backend=backend)
-        assert isinstance(middleware.backend, CompositeBackend)
+        middleware = FilesystemMiddleware(backend=backend)
+        assert isinstance(middleware.backend, CompositeStateBackendProvider)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
     def test_init_custom_system_prompt_default(self):
         middleware = FilesystemMiddleware(system_prompt="Custom system prompt")
-        assert isinstance(middleware.backend, StateBackend)
+        assert isinstance(middleware.backend, StateBackendProvider)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
     def test_init_custom_system_prompt_with_composite(self):
-        backend = CompositeBackend(
-            default=StateBackend(),
-            routes={"/memories/": StoreBackend()}
+        backend = CompositeStateBackendProvider(
+            routes={"/memories/": StoreBackendProvider()}
         )
-        middleware = FilesystemMiddleware(memory_backend=backend, system_prompt="Custom system prompt")
-        assert isinstance(middleware.backend, CompositeBackend)
+        middleware = FilesystemMiddleware(backend=backend, system_prompt="Custom system prompt")
+        assert isinstance(middleware.backend, CompositeStateBackendProvider)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
     def test_init_custom_tool_descriptions_default(self):
         middleware = FilesystemMiddleware(custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert isinstance(middleware.backend, StateBackend)
+        assert isinstance(middleware.backend, StateBackendProvider)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
     def test_init_custom_tool_descriptions_with_composite(self):
-        backend = CompositeBackend(
-            default=StateBackend(),
-            routes={"/memories/": StoreBackend()}
+        backend = CompositeStateBackendProvider(
+            routes={"/memories/": StoreBackendProvider()}
         )
-        middleware = FilesystemMiddleware(memory_backend=backend, custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert isinstance(middleware.backend, CompositeBackend)
+        middleware = FilesystemMiddleware(backend=backend, custom_tool_descriptions={"ls": "Custom ls tool description"})
+        assert isinstance(middleware.backend, CompositeStateBackendProvider)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
@@ -110,12 +113,12 @@ class TestFilesystemMiddleware:
         state = FilesystemState(
             messages=[],
             files={
-                "test.txt": FileData(
+                "/test.txt": FileData(
                     content=["Hello world"],
                     modified_at="2021-01-01",
                     created_at="2021-01-01",
                 ),
-                "test2.txt": FileData(
+                "/test2.txt": FileData(
                     content=["Goodbye world"],
                     modified_at="2021-01-01",
                     created_at="2021-01-01",
@@ -125,9 +128,12 @@ class TestFilesystemMiddleware:
         middleware = FilesystemMiddleware()
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         result = ls_tool.invoke(
-            {"runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={})}
+            {
+                "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
+                "path": "/"
+            }
         )
-        assert result == ["test.txt", "test2.txt"]
+        assert result == ["/test.txt", "/test2.txt"]
 
     def test_ls_shortterm_with_path(self):
         state = FilesystemState(
@@ -192,9 +198,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(
-            memory_backend=StateBackend()
-        )
+        middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         print(glob_search_tool)
         result = glob_search_tool.invoke(
@@ -231,7 +235,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
@@ -264,7 +268,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
@@ -298,7 +302,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
@@ -321,7 +325,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
         result = glob_search_tool.invoke(
             {
@@ -352,7 +356,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
@@ -375,7 +379,7 @@ class TestFilesystemMiddleware:
                 ),
             },
         )
-        middleware = FilesystemMiddleware(memory_backend=StateBackend())
+        middleware = FilesystemMiddleware()
         grep_search_tool = next(tool for tool in middleware.tools if tool.name == "grep")
         result = grep_search_tool.invoke(
             {
@@ -437,7 +441,7 @@ class TestFilesystemMiddleware:
         result = grep_search_tool.invoke(
             {
                 "pattern": "import",
-                "include": "*.py",
+                "glob": "*.py",
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
@@ -839,14 +843,12 @@ class TestPatchToolCallsMiddleware:
 
 class TestTruncation:
     def test_truncate_list_result_no_truncation(self):
-        from deepagents.memory.backends.utils import truncate_if_too_long
 
         items = ["/file1.py", "/file2.py", "/file3.py"]
         result = truncate_if_too_long(items)
         assert result == items
 
     def test_truncate_list_result_with_truncation(self):
-        from deepagents.memory.backends.utils import truncate_if_too_long
 
         # Create a list that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
         large_items = [f"/very_long_file_path_{'x' * 100}_{i}.py" for i in range(1000)]
@@ -859,14 +861,12 @@ class TestTruncation:
         assert "try being more specific" in result[-1]
 
     def test_truncate_string_result_no_truncation(self):
-        from deepagents.memory.backends.utils import truncate_if_too_long
 
         content = "short content"
         result = truncate_if_too_long(content)
         assert result == content
 
     def test_truncate_string_result_with_truncation(self):
-        from deepagents.memory.backends.utils import truncate_if_too_long
 
         # Create string that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
         large_content = "x" * 100000
