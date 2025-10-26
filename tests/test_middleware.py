@@ -16,6 +16,8 @@ from deepagents.middleware.filesystem import (
     FileData,
     FilesystemMiddleware,
     FilesystemState,
+    _create_file_data,
+    _update_file_data,
 )
 from deepagents.backends import StoreBackend, CompositeBackend
 from deepagents.backends import (
