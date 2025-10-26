@@ -301,15 +301,17 @@ You can configure persistent long-term memory using a CompositeBackend with Stor
 
 ```python
 from deepagents import create_deep_agent
-from deepagents.backends import StateBackend, StoreBackend, CompositeBackend
+from deepagents.backends import (
+    CompositeStateBackendProvider,
+    StoreBackendProvider,
+)
 from langgraph.store.memory import InMemoryStore
 
 store = InMemoryStore()  # Or any other Store object
 
 # Create a hybrid backend: ephemeral files in / and persistent files in /memories/
-backend = CompositeBackend(
-    default=StateBackend(),
-    routes={"/memories/": StoreBackend()}
+backend = CompositeStateBackendProvider(
+    routes={"/memories/": StoreBackendProvider()}
 )
 
 agent = create_deep_agent(
@@ -390,7 +392,11 @@ Context engineering is one of the main challenges in building effective agents. 
 ```python
 from langchain.agents import create_agent
 from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
+from deepagents.backends import (
+    StateBackendProvider,
+    CompositeStateBackendProvider,
+    StoreBackendProvider,
+)
 
 # FilesystemMiddleware is included by default in create_deep_agent
 # You can customize it if building a custom agent
@@ -398,11 +404,10 @@ agent = create_agent(
     model="anthropic:claude-sonnet-4-20250514",
     middleware=[
         FilesystemMiddleware(
-            backend=StateBackend(),  # Optional: customize storage backend (defaults to StateBackend)
-            # For persistent memory, use CompositeBackend:
-            # backend=CompositeBackend(
-            #     default=StateBackend(),
-            #     routes={"/memories/": StoreBackend()}
+            backend=StateBackendProvider(),  # Optional: customize storage backend (defaults to StateBackendProvider)
+            # For persistent memory, use CompositeStateBackendProvider:
+            # backend=CompositeStateBackendProvider(
+            #     routes={"/memories/": StoreBackendProvider()}
             # )
             system_prompt="Write to the filesystem when...",  # Optional custom system prompt override
             custom_tool_descriptions={

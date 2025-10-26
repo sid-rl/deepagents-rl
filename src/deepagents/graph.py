@@ -79,10 +79,10 @@ def create_deep_agent(
         response_format: A structured output response format to use for the agent.
         context_schema: The schema of the deep agent.
         checkpointer: Optional checkpointer for persisting agent state between runs.
-        store: Optional store for persistent storage (required if memory_backend uses StoreBackend).
-        memory_backend: Optional backend for file storage. Defaults to StateBackend (ephemeral
-            storage in agent state). For persistent or hybrid storage, use CompositeBackend.
-            Example: CompositeBackend(default=StateBackend(), routes={"/memories/": StoreBackend()})
+        store: Optional store for persistent storage (required if backend uses StoreBackend).
+        backend: Optional backend provider for file storage. Defaults to StateBackendProvider
+            (ephemeral storage in agent state). For persistent memory, use CompositeStateBackendProvider.
+            Example: CompositeStateBackendProvider(routes={"/memories/": StoreBackendProvider()})
         interrupt_on: Optional Dict[str, bool | InterruptOnConfig] mapping tool names to
             interrupt configs.
         debug: Whether to enable debug mode. Passed through to create_agent.
