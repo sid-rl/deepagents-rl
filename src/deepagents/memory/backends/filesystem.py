@@ -19,17 +19,15 @@ from langgraph.types import Command
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
 
-<<<<<<< HEAD
 from .utils import (
     check_empty_content,
     format_content_with_line_numbers,
     perform_string_replacement,
     _format_grep_results,
+    truncate_if_too_long
 )
 import wcmatch.glob as wcglob
-=======
-from .utils import check_empty_content, format_content_with_line_numbers, perform_string_replacement, truncate_if_too_long
->>>>>>> e0fd94ba77322dd976593f410515178ebd35fdf6
+
 
 
 class FilesystemBackend:
