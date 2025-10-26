@@ -166,7 +166,6 @@ class TestFilesystemMiddleware:
         assert "/pokemon/test2.txt" in result
         assert "/pokemon/charmander.txt" in result
 
-<<<<<<< HEAD
     def test_glob_search_shortterm_simple_pattern(self):
         state = FilesystemState(
             messages=[],
@@ -647,18 +646,12 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(55)}
 
-=======
->>>>>>> master
     def test_create_file_data_splits_long_lines(self):
         long_line = "a" * 3500
         short_line = "short line"
         content = f"{short_line}\n{long_line}"
 
-<<<<<<< HEAD
         file_data = create_file_data(content)
-=======
-        file_data = _create_file_data(content)
->>>>>>> master
 
         for line in file_data["content"]:
             assert len(line) <= 2000
@@ -669,21 +662,13 @@ class TestFilesystemMiddleware:
         assert file_data["content"][2] == "a" * 1500
 
     def test_update_file_data_splits_long_lines(self):
-<<<<<<< HEAD
         initial_file_data = create_file_data("initial content")
-=======
-        initial_file_data = _create_file_data("initial content")
->>>>>>> master
 
         long_line = "b" * 5000
         short_line = "another short line"
         new_content = f"{short_line}\n{long_line}"
 
-<<<<<<< HEAD
         updated_file_data = update_file_data(initial_file_data, new_content)
-=======
-        updated_file_data = _update_file_data(initial_file_data, new_content)
->>>>>>> master
 
         for line in updated_file_data["content"]:
             assert len(line) <= 2000
