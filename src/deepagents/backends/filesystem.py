@@ -23,8 +23,8 @@ from .utils import (
     check_empty_content,
     format_content_with_line_numbers,
     perform_string_replacement,
-    _format_grep_results,
-    truncate_if_too_long
+    truncate_if_too_long,
+    format_grep_matches,
 )
 import wcmatch.glob as wcglob
 
@@ -85,20 +85,20 @@ class FilesystemBackend:
             return path
         return (self.cwd / path).resolve()
 
-    def ls(self, path: str) -> list[str]:
+    def ls_info(self, path: str) -> list[dict]:
         """List files from filesystem.
 
         Args:
             path: Absolute directory path to list files from.
         
         Returns:
-            List of absolute file paths.
+            List of FileInfo-like dicts.
         """
         dir_path = self._resolve_path(path)
         if not dir_path.exists() or not dir_path.is_dir():
             return []
 
-        results: list[str] = []
+        results: list[dict] = []
 
         # Convert cwd to string for comparison
         cwd_str = str(self.cwd)
@@ -108,10 +108,23 @@ class FilesystemBackend:
         # Walk the directory tree
         try:
             for path in dir_path.rglob("*"):
-                if path.is_file():
+                try:
+                    is_file = path.is_file()
+                except OSError:
+                    continue
+                if is_file:
                     abs_path = str(path)
                     if not self.virtual_mode:
-                        results.append(abs_path)
+                        try:
+                            st = path.stat()
+                            results.append({
+                                "path": abs_path,
+                                "is_dir": False,
+                                "size": int(st.st_size),
+                                "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                            })
+                        except OSError:
+                            results.append({"path": abs_path, "is_dir": False})
                         continue
                     # Strip the cwd prefix if present
                     if abs_path.startswith(cwd_str):
@@ -123,11 +136,27 @@ class FilesystemBackend:
                         # Path is outside cwd, return as-is or skip
                         relative_path = abs_path
 
-                    results.append("/" + relative_path)
+                    virt_path = "/" + relative_path
+                    try:
+                        st = path.stat()
+                        results.append({
+                            "path": virt_path,
+                            "is_dir": False,
+                            "size": int(st.st_size),
+                            "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                        })
+                    except OSError:
+                        results.append({"path": virt_path, "is_dir": False})
         except (OSError, PermissionError):
             pass
 
-        return truncate_if_too_long(sorted(results))
+        # Keep deterministic order by path
+        results.sort(key=lambda x: x.get("path", ""))
+        return results
+
+    def ls(self, path: str) -> list[str]:
+        infos = self.ls_info(path)
+        return [fi["path"] for fi in infos]
     
     def read(
         self, 
@@ -276,6 +305,18 @@ class FilesystemBackend:
         Returns:
             Formatted search results based on output_mode.
         """
+        matches_or_err = self.grep_raw(pattern, path, glob)
+        if isinstance(matches_or_err, str):
+            return matches_or_err
+        formatted = format_grep_matches(matches_or_err, output_mode)
+        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+
+    def grep_raw(
+        self,
+        pattern: str,
+        path: Optional[str] = None,
+        glob: Optional[str] = None,
+    ) -> list[dict] | str:
         # Validate regex
         try:
             re.compile(pattern)
@@ -286,20 +327,21 @@ class FilesystemBackend:
         try:
             base_full = self._resolve_path(path or ".")
         except ValueError:
-            return f"No matches found for pattern: '{pattern}'"
+            return []
 
         if not base_full.exists():
-            return f"No matches found for pattern: '{pattern}'"
+            return []
 
         # Try ripgrep first
         results = self._ripgrep_search(pattern, base_full, glob)
         if results is None:
             results = self._python_search(pattern, base_full, glob)
 
-        if not results:
-            return f"No matches found for pattern: '{pattern}'"
-
-        return truncate_if_too_long(_format_grep_results(results, output_mode))
+        matches: list[dict] = []
+        for fpath, items in results.items():
+            for line_num, line_text in items:
+                matches.append({"path": fpath, "line": int(line_num), "text": line_text})
+        return matches
 
     def _ripgrep_search(
         self, pattern: str, base_full: Path, include_glob: Optional[str]

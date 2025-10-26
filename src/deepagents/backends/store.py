@@ -18,7 +18,8 @@ from deepagents.backends.utils import (
     perform_string_replacement,
     truncate_if_too_long,
     _glob_search_files,
-    _grep_search_files,
+    grep_matches_from_files,
+    format_grep_matches,
 )
 
 
@@ -160,22 +161,39 @@ class StoreBackend:
 
         return all_items
     
-    def ls(self, path: str) -> list[str]:
+    def ls_info(self, path: str) -> list[dict]:
         """List files from store.
         
         Args:
             path: Absolute path to directory.
         
         Returns:
-            List of file paths.
+            List of FileInfo-like dicts.
         """
         store = self._get_store()
         namespace = self._get_namespace()
         
         # Search store with path filter
         items = self._search_store_paginated(store, namespace, filter={"prefix": path})
-        
-        return truncate_if_too_long([item.key for item in items])
+        infos: list[dict] = []
+        for item in items:
+            try:
+                fd = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+            size = len("\n".join(fd.get("content", [])))
+            infos.append({
+                "path": item.key,
+                "is_dir": False,
+                "size": int(size),
+                "modified_at": fd.get("modified_at", ""),
+            })
+        infos.sort(key=lambda x: x.get("path", ""))
+        return infos
+
+    def ls(self, path: str) -> list[str]:
+        infos = self.ls_info(path)
+        return [fi["path"] for fi in infos]
     
     def read(
         self, 
@@ -295,20 +313,35 @@ class StoreBackend:
         """
         store = self._get_store()
         namespace = self._get_namespace()
-        
         items = self._search_store_paginated(store, namespace)
-        
-        files = {}
+        files: dict[str, Any] = {}
         for item in items:
-            if item is None:
-                continue
             try:
-                file_data = self._convert_store_item_to_file_data(item)
-                files[item.key] = file_data
+                files[item.key] = self._convert_store_item_to_file_data(item)
             except ValueError:
                 continue
-        
-        return truncate_if_too_long(_grep_search_files(files, pattern, path, glob, output_mode))
+        matches_or_err = grep_matches_from_files(files, pattern, path, glob)
+        if isinstance(matches_or_err, str):
+            return matches_or_err
+        formatted = format_grep_matches(matches_or_err, output_mode)
+        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+
+    def grep_raw(
+        self,
+        pattern: str,
+        path: str = "/",
+        glob: Optional[str] = None,
+    ) -> list[dict] | str:
+        store = self._get_store()
+        namespace = self._get_namespace()
+        items = self._search_store_paginated(store, namespace)
+        files: dict[str, Any] = {}
+        for item in items:
+            try:
+                files[item.key] = self._convert_store_item_to_file_data(item)
+            except ValueError:
+                continue
+        return grep_matches_from_files(files, pattern, path, glob)
     
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.

@@ -16,7 +16,8 @@ from .utils import (
     perform_string_replacement,
     truncate_if_too_long,
     _glob_search_files,
-    _grep_search_files,
+    grep_matches_from_files,
+    format_grep_matches,
 )
 
 
@@ -38,19 +39,33 @@ class StateBackend:
         Args:"""
         self.runtime = runtime
     
-    def ls(self, path: str) -> list[str]:
+    def ls_info(self, path: str) -> list[dict]:
         """List files from state.
         
         Args:
             path: Absolute path to directory.
         
         Returns:
-            List of file paths.
+            List of FileInfo-like dicts.
         """
         files = self.runtime.state.get("files", {})
-        keys = list(files.keys())
-        keys = [k for k in keys if k.startswith(path)]
-        return truncate_if_too_long(keys)
+        infos: list[dict] = []
+        for k, fd in files.items():
+            if not k.startswith(path):
+                continue
+            size = len("\n".join(fd.get("content", [])))
+            infos.append({
+                "path": k,
+                "is_dir": False,
+                "size": int(size),
+                "modified_at": fd.get("modified_at", ""),
+            })
+        infos.sort(key=lambda x: x.get("path", ""))
+        return infos
+
+    def ls(self, path: str) -> list[str]:
+        infos = self.ls_info(path)
+        return [fi["path"] for fi in infos]
     
     def read(
         self, 
@@ -167,8 +182,20 @@ class StateBackend:
             Formatted search results based on output_mode.
         """
         files = self.runtime.state.get("files", {})
-        
-        return truncate_if_too_long(_grep_search_files(files, pattern, path, glob, output_mode))
+        matches_or_err = grep_matches_from_files(files, pattern, path, glob)
+        if isinstance(matches_or_err, str):
+            return matches_or_err
+        formatted = format_grep_matches(matches_or_err, output_mode)
+        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
+
+    def grep_raw(
+        self,
+        pattern: str,
+        path: str = "/",
+        glob: Optional[str] = None,
+    ) -> list[dict] | str:
+        files = self.runtime.state.get("files", {})
+        return grep_matches_from_files(files, pattern, path, glob)
     
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.

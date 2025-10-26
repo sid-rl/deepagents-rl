@@ -1,16 +1,40 @@
-"""Shared utility functions for memory backend implementations."""
+"""Shared utility functions for memory backend implementations.
+
+This module contains both user-facing string formatters and structured
+helpers used by backends and the composite router. Structured helpers
+enable composition without fragile string parsing.
+"""
 
 import re
 import wcmatch.glob as wcglob
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, List, Dict
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
 MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
 TOOL_RESULT_TOKEN_LIMIT = 20000  # Same threshold as eviction
 TRUNCATION_GUIDANCE = "... [results truncated, try being more specific with your parameters]"
+
+
+class FileInfo(TypedDict, total=False):
+    """Structured file listing info.
+
+    Minimal contract used across backends. Only "path" is required.
+    Other fields are best-effort and may be absent depending on backend.
+    """
+    path: str
+    is_dir: bool
+    size: int  # bytes (approx)
+    modified_at: str  # ISO timestamp if known
+
+
+class GrepMatch(TypedDict):
+    """Structured grep match entry."""
+    path: str
+    line: int
+    text: str
 
 
 def format_content_with_line_numbers(
@@ -333,3 +357,60 @@ def _grep_search_files(
     if not results:
         return "No matches found"
     return _format_grep_results(results, output_mode)
+
+
+# -------- Structured helpers for composition --------
+
+def grep_matches_from_files(
+    files: dict[str, Any],
+    pattern: str,
+    path: str | None = None,
+    glob: str | None = None,
+) -> list[GrepMatch] | str:
+    """Return structured grep matches from an in-memory files mapping.
+
+    Returns a list of GrepMatch on success, or an error string for invalid regex.
+    """
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Invalid regex pattern: {e}"
+
+    try:
+        normalized_path = _validate_path(path)
+    except ValueError:
+        return []
+
+    filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
+
+    if glob:
+        filtered = {
+            fp: fd
+            for fp, fd in filtered.items()
+            if wcglob.globmatch(Path(fp).name, glob, flags=wcglob.BRACE)
+        }
+
+    matches: list[GrepMatch] = []
+    for file_path, file_data in filtered.items():
+        for line_num, line in enumerate(file_data["content"], 1):
+            if regex.search(line):
+                matches.append({"path": file_path, "line": int(line_num), "text": line})
+    return matches
+
+
+def build_grep_results_dict(matches: List[GrepMatch]) -> Dict[str, list[tuple[int, str]]]:
+    """Group structured matches into the legacy dict form used by formatters."""
+    grouped: Dict[str, list[tuple[int, str]]] = {}
+    for m in matches:
+        grouped.setdefault(m["path"], []).append((m["line"], m["text"]))
+    return grouped
+
+
+def format_grep_matches(
+    matches: List[GrepMatch],
+    output_mode: Literal["files_with_matches", "content", "count"],
+) -> str:
+    """Format structured grep matches using existing formatting logic."""
+    if not matches:
+        return "No matches found"
+    return _format_grep_results(build_grep_results_dict(matches), output_mode)

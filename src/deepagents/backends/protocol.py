@@ -5,7 +5,7 @@ must follow. Backends can store files in different locations (state, filesystem,
 database, etc.) and provide a uniform interface for file operations.
 """
 
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable, Callable, TypeAlias
 from langgraph.types import Command
 from langchain.tools import ToolRuntime
 
@@ -33,6 +33,14 @@ class _BackendProtocol(Protocol):
         
         Returns:
             List of absolute file paths in the specified directory.
+        """
+        ...
+
+    def ls_info(self, path: str) -> list[dict]:
+        """Structured listing with file metadata.
+
+        Returns a list of FileInfo-like dicts: at minimum includes "path";
+        may include fields such as "is_dir", "size", and "modified_at" depending on backend.
         """
         ...
     
@@ -88,6 +96,19 @@ class _BackendProtocol(Protocol):
         
         Returns:
             Formatted search results based on output_mode, or message if no matches found.
+        """
+        ...
+
+    def grep_raw(
+        self,
+        pattern: str,
+        path: Optional[str] = None,
+        glob: Optional[str] = None,
+    ) -> list[dict] | str:
+        """Structured search results.
+
+        Returns a list of GrepMatch-like dicts {path, line, text}, or an error string
+        for invalid regex. Prefer this for composition; use grep() for user output.
         """
         ...
     
@@ -159,6 +180,9 @@ class BackendProvider(Protocol):
     def get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
         """Get the backend."""
         ...
+
+# Callable factory alternative to provider classes
+BackendFactory: TypeAlias = Callable[[ToolRuntime], BackendProtocol]
 
 
 class StateBackendProtocol(_BackendProtocol):

@@ -98,50 +98,36 @@ class _CompositeBackend:
             output_mode: Output format - "files_with_matches", "content", or "count"Returns:
             Formatted search results based on output_mode.
         """
+        # If path targets a specific route, search only that backend
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
                 search_path = path[len(route_prefix) - 1:]
-                result = backend.grep(pattern, search_path if search_path else "/", glob, output_mode)
-                if result.startswith("No matches found"):
-                    return result
-                
-                lines = result.split("\n")
-                prefixed_lines = []
-                for line in lines:
-                    if output_mode == "files_with_matches" or line.endswith(":") or ": " in line.split(":", 1)[0]:
-                        if line and not line.startswith(" "):
-                            prefixed_lines.append(f"{route_prefix[:-1]}{line}")
-                        else:
-                            prefixed_lines.append(line)
-                    else:
-                        prefixed_lines.append(line)
-                return "\n".join(prefixed_lines)
+                raw = backend.grep_raw(pattern, search_path if search_path else "/", glob)
+                if isinstance(raw, str):
+                    return raw
+                if not raw:
+                    return f"No matches found for pattern: '{pattern}'"
+                prefixed = [{**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw]
+                from .utils import format_grep_matches, truncate_if_too_long  # lazy import
+                formatted = format_grep_matches(prefixed, output_mode)
+                return truncate_if_too_long(formatted)  # type: ignore[arg-type]
 
-        all_results = []
-        
-        default_result = self.default.grep(pattern, path, glob, output_mode)
-        if not default_result.startswith("No matches found"):
-            all_results.append(default_result)
-        
+        # Otherwise, search default and all routed backends and merge
+        all_matches: list[dict] = []
+        raw_default = self.default.grep_raw(pattern, path, glob)  # type: ignore[attr-defined]
+        if isinstance(raw_default, str):
+            return raw_default
+        all_matches.extend(raw_default)
+
         for route_prefix, backend in self.routes.items():
-            result = backend.grep(pattern, None, glob, output_mode)
-            if not result.startswith("No matches found"):
-                lines = result.split("\n")
-                prefixed_lines = []
-                for line in lines:
-                    if output_mode == "files_with_matches" or line.endswith(":") or (": " in line and not line.startswith(" ")):
-                        if line and not line.startswith(" "):
-                            prefixed_lines.append(f"{route_prefix[:-1]}{line}")
-                        else:
-                            prefixed_lines.append(line)
-                    else:
-                        prefixed_lines.append(line)
-                all_results.append("\n".join(prefixed_lines))
-        
-        if not all_results:
-            return f"No matches found for pattern: '{pattern}'"
-        
-        return "\n".join(all_results)
+            raw = backend.grep_raw(pattern, "/", glob)
+            if isinstance(raw, str):
+                return raw
+            all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
+
+        from .utils import format_grep_matches, truncate_if_too_long
+        formatted = format_grep_matches(all_matches, output_mode)
+        return truncate_if_too_long(formatted)  # type: ignore[arg-type]
     
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern across all backends.
@@ -259,13 +245,21 @@ class CompositeBackend(_CompositeBackend):
 
 class CompositeStateBackendProvider(StateBackendProvider):
 
-    def __init__(self, routes: dict[str, BackendProtocol | BackendProvider]):
+    def __init__(self, routes: dict[str, BackendProtocol | BackendProvider | "BackendFactory"]):
         self.routes = routes
 
     def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
-        return CompositeStateBacked(
-            default=StateBackendProvider.get_backend(runtime),
-            routes={
-                k: v if isinstance(v, BackendProtocol) else v.get_backend(runtime) for k,v in self.routes.items()
-            }
-        )
+        from deepagents.backends.protocol import BackendFactory  # avoid circular import at module load
+        # Build routed backends, allowing instances, providers, or factories
+        built_routes: dict[str, BackendProtocol] = {}
+        for k, v in self.routes.items():
+            if isinstance(v, BackendProtocol):
+                built_routes[k] = v
+            elif callable(v):  # BackendFactory
+                built_routes[k] = v(runtime)  # type: ignore[misc]
+            else:
+                built_routes[k] = v.get_backend(runtime)  # type: ignore[union-attr]
+
+        # Default state-backed storage for writes/edits
+        default_state = StateBackend(runtime)
+        return CompositeStateBacked(default=default_state, routes=built_routes)
