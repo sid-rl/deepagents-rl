@@ -191,7 +191,4 @@ class StateBackend:
             })
         return infos
 
-class StateBackendProvider:
-
-    def get_backend(self, runtime: ToolRuntime):
-        return StateBackend(runtime)
+# Provider classes removed: prefer callables like `lambda rt: StateBackend(rt)`

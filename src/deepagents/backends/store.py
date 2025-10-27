@@ -338,16 +338,4 @@ class StoreBackend:
         return infos
 
 
-class StoreBackendProvider:
-    """Provider for StoreBackend that creates instances with runtime."""
-    
-    def get_backend(self, runtime: "ToolRuntime") -> StoreBackend:
-        """Create a StoreBackend instance with the given runtime.
-        
-        Args:
-            runtime: The ToolRuntime instance to pass to StoreBackend.
-            
-        Returns:
-            Configured StoreBackend instance.
-        """
-        return StoreBackend(runtime)
+# Provider classes removed: prefer callables like `lambda rt: StoreBackend(rt)`

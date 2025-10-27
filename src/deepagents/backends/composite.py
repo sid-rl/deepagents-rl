@@ -4,8 +4,8 @@ from typing import Any, Literal, Optional, TYPE_CHECKING
 
 from langchain.tools import ToolRuntime
 
-from deepagents.backends.protocol import BackendProtocol, BackendProvider, StateBackendProvider, StateBackendProtocol
-from deepagents.backends.state import StateBackend, StateBackendProvider
+from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol
+from deepagents.backends.state import StateBackend
 from langgraph.types import Command
 from deepagents.backends.utils import FileInfo, GrepMatch
 
@@ -230,23 +230,19 @@ class CompositeBackend(_CompositeBackend):
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
 
-class CompositeStateBackendProvider(StateBackendProvider):
+# Provider removed. Use a simple factory function instead.
+def build_composite_state_backend(
+    runtime: ToolRuntime,
+    *,
+    routes: dict[str, BackendProtocol | "BackendFactory"],
+) -> StateBackendProtocol:
+    from deepagents.backends.protocol import BackendFactory
+    built_routes: dict[str, BackendProtocol] = {}
+    for k, v in routes.items():
+        if isinstance(v, BackendProtocol):
+            built_routes[k] = v
+        else:
+            built_routes[k] = v(runtime)  # type: ignore[misc]
 
-    def __init__(self, routes: dict[str, BackendProtocol | BackendProvider | "BackendFactory"]):
-        self.routes = routes
-
-    def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
-        from deepagents.backends.protocol import BackendFactory  # avoid circular import at module load
-        # Build routed backends, allowing instances, providers, or factories
-        built_routes: dict[str, BackendProtocol] = {}
-        for k, v in self.routes.items():
-            if isinstance(v, BackendProtocol):
-                built_routes[k] = v
-            elif callable(v):  # BackendFactory
-                built_routes[k] = v(runtime)  # type: ignore[misc]
-            else:
-                built_routes[k] = v.get_backend(runtime)  # type: ignore[union-attr]
-
-        # Default state-backed storage for writes/edits
-        default_state = StateBackend(runtime)
-        return CompositeStateBacked(default=default_state, routes=built_routes)
+    default_state = StateBackend(runtime)
+    return CompositeStateBacked(default=default_state, routes=built_routes)

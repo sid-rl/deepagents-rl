@@ -21,9 +21,8 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, StateBackendProvider, BackendProvider
+from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol
 from deepagents.backends import StateBackend, CompositeBackend
-from deepagents.backends.state import StateBackendProvider
 from deepagents.backends.utils import (
     create_file_data,
     format_content_with_line_numbers,
@@ -36,7 +35,11 @@ MAX_LINE_LENGTH = 2000
 LINE_NUMBER_WIDTH = 6
 DEFAULT_READ_OFFSET = 0
 DEFAULT_READ_LIMIT = 2000
-BACKEND_TYPES = BackendProvider | BackendProtocol | StateBackendProtocol | StateBackendProtocol
+BACKEND_TYPES = (
+    BackendProtocol
+    | StateBackendProtocol
+    | Callable[[ToolRuntime], BackendProtocol | StateBackendProtocol]
+)
 
 
 class FileData(TypedDict):
@@ -224,10 +227,9 @@ All file paths must start with a /.
 
 
 def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> StateBackendProtocol | BackendProtocol:
-    if isinstance(backend, (StateBackendProvider, BackendProvider)):
-        return backend.get_backend(runtime)
-    else:
-        return backend
+    if callable(backend):
+        return backend(runtime)
+    return backend
 
 
 def _ls_tool_generator(
@@ -450,16 +452,9 @@ class FilesystemMiddleware(AgentMiddleware):
     the BackendProtocol.
 
     Args:
-<<<<<<< HEAD
-        memory_backend: Backend for file storage. If not provided, defaults to StateBackend
+        backend: Backend for file storage. If not provided, defaults to StateBackend
             (ephemeral storage in agent state). For persistent storage or hybrid setups,
             use CompositeBackend with custom routes.
-=======
-        long_term_memory: Whether to enable longterm memory support.
-<<<<<<< HEAD
->>>>>>> master
-=======
->>>>>>> master
         system_prompt: Optional custom system prompt override.
         custom_tool_descriptions: Optional custom tool descriptions override.
         tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
@@ -503,7 +498,7 @@ class FilesystemMiddleware(AgentMiddleware):
         self.tool_token_limit_before_evict = tool_token_limit_before_evict
 
         # Use provided backend or default to StateBackend factory
-        self.backend = backend if backend is not None else StateBackendProvider()
+        self.backend = backend if backend is not None else (lambda rt: StateBackend(rt))
 
         # Set system prompt (allow full override)
         self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT

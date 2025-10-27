@@ -139,14 +139,6 @@ class BackendProtocol(_BackendProtocol):
         ...
 
 
-@runtime_checkable
-class BackendProvider(Protocol):
-
-    def get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
-        """Get the backend."""
-        ...
-
-# Callable factory alternative to provider classes
 BackendFactory: TypeAlias = Callable[[ToolRuntime], BackendProtocol]
 
 
@@ -199,9 +191,4 @@ class StateBackendProtocol(_BackendProtocol):
         """
         ...
 
-@runtime_checkable
-class StateBackendProvider(Protocol):
-
-    def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
-        """Get the backend."""
-        ...
+# Provider protocols removed. Prefer BackendFactory callables instead.
