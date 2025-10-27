@@ -18,6 +18,7 @@ from .utils import (
     grep_matches_from_files,
 )
 from deepagents.backends.utils import FileInfo, GrepMatch
+from deepagents.backends.protocol import WriteResult, EditResult
 
 
 class StateBackend:
@@ -90,33 +91,17 @@ class StateBackend:
         self, 
         file_path: str,
         content: str,
-    ) -> Command | str:
+    ) -> WriteResult:
         """Create a new file with content.
-        
-        Args:
-            file_path: Absolute file path
-            content: File content as a stringReturns:
-            Command object to update state, or error message if file exists.
+        Returns WriteResult with files_update to update LangGraph state.
         """
         files = self.runtime.state.get("files", {})
         
         if file_path in files:
-            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+            return WriteResult(error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path.")
         
         new_file_data = create_file_data(content)
-        tool_call_id = self.runtime.tool_call_id
-        
-        return Command(
-            update={
-                "files": {file_path: new_file_data},
-                "messages": [
-                    ToolMessage(
-                        content=f"Updated file {file_path}",
-                        tool_call_id=tool_call_id,
-                    )
-                ],
-            }
-        )
+        return WriteResult(path=file_path, files_update={file_path: new_file_data})
     
     def edit(
         self, 
@@ -124,43 +109,25 @@ class StateBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-    ) -> Command | str:
+    ) -> EditResult:
         """Edit a file by replacing string occurrences.
-        
-        Args:
-            file_path: Absolute file path
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrencesReturns:
-            Command object to update state, or error message on failure.
+        Returns EditResult with files_update and occurrences.
         """
         files = self.runtime.state.get("files", {})
         file_data = files.get(file_path)
         
         if file_data is None:
-            return f"Error: File '{file_path}' not found"
+            return EditResult(error=f"Error: File '{file_path}' not found")
         
         content = file_data_to_string(file_data)
         result = perform_string_replacement(content, old_string, new_string, replace_all)
         
         if isinstance(result, str):
-            return result
+            return EditResult(error=result)
         
         new_content, occurrences = result
         new_file_data = update_file_data(file_data, new_content)
-        tool_call_id = self.runtime.tool_call_id
-        
-        return Command(
-            update={
-                "files": {file_path: new_file_data},
-                "messages": [
-                    ToolMessage(
-                        content=f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'",
-                        tool_call_id=tool_call_id,
-                    )
-                ],
-            }
-        )
+        return EditResult(path=file_path, files_update={file_path: new_file_data}, occurrences=int(occurrences))
     
     # Removed legacy grep() convenience to keep lean surface
 

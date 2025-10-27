@@ -5,10 +5,59 @@ must follow. Backends can store files in different locations (state, filesystem,
 database, etc.) and provide a uniform interface for file operations.
 """
 
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable, Callable, TypeAlias
-from langgraph.types import Command
+from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable, Callable, TypeAlias, Any
 from langchain.tools import ToolRuntime
 from deepagents.backends.utils import FileInfo, GrepMatch
+
+from dataclasses import dataclass
+
+
+@dataclass
+class WriteResult:
+    """Result from backend write operations.
+    Attributes:
+        error: Error message on failure, None on success.
+        path: Absolute path of written file, None on failure.
+        files_update: State update dict for checkpoint backends, None for external storage.
+            Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
+            External backends set None (already persisted to disk/S3/database/etc).
+    Examples:
+        >>> # Checkpoint storage
+        >>> WriteResult(path="/f.txt", files_update={"/f.txt": {...}})
+        >>> # External storage
+        >>> WriteResult(path="/f.txt", files_update=None)
+        >>> # Error
+        >>> WriteResult(error="File exists")
+    """
+
+    error: str | None = None
+    path: str | None = None
+    files_update: dict[str, Any] | None = None
+
+
+@dataclass
+class EditResult:
+    """Result from backend edit operations.
+    Attributes:
+        error: Error message on failure, None on success.
+        path: Absolute path of edited file, None on failure.
+        files_update: State update dict for checkpoint backends, None for external storage.
+            Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
+            External backends set None (already persisted to disk/S3/database/etc).
+        occurrences: Number of replacements made, None on failure.
+    Examples:
+        >>> # Checkpoint storage
+        >>> EditResult(path="/f.txt", files_update={"/f.txt": {...}}, occurrences=1)
+        >>> # External storage
+        >>> EditResult(path="/f.txt", files_update=None, occurrences=2)
+        >>> # Error
+        >>> EditResult(error="File not found")
+    """
+
+    error: str | None = None
+    path: str | None = None
+    files_update: dict[str, Any] | None = None
+    occurrences: int | None = None
 
 @runtime_checkable
 class _BackendProtocol(Protocol):
@@ -92,19 +141,10 @@ class BackendProtocol(_BackendProtocol):
             self,
             file_path: str,
             content: str,
-    ) -> str:
+    ) -> WriteResult:
         """Create a new file with content.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error if file already exists
-
-        Error cases:
-            - Returns error message if file already exists (should use edit instead)
+        Returns WriteResult with either files_update for state backends or None for external storage.
+        Error is populated on failure.
         """
         ...
 
@@ -114,78 +154,13 @@ class BackendProtocol(_BackendProtocol):
             old_string: str,
             new_string: str,
             replace_all: bool = False,
-    ) -> str:
+    ) -> EditResult:
         """Edit a file by replacing string occurrences.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error message on failure
-
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
+        Returns EditResult with occurrences and optional files_update for state backends.
+        Error is populated on failure.
         """
         ...
 
 
 BackendFactory: TypeAlias = Callable[[ToolRuntime], BackendProtocol]
-
-
-class StateBackendProtocol(_BackendProtocol):
-
-    def write(
-            self,
-            file_path: str,
-            content: str,
-    ) -> Command | str:
-        """Create a new file with content.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error if file already exists
-
-        Error cases:
-            - Returns error message if file already exists (should use edit instead)
-        """
-        ...
-
-    def edit(
-            self,
-            file_path: str,
-            old_string: str,
-            new_string: str,
-            replace_all: bool = False,
-    ) -> Command | str:
-        """Edit a file by replacing string occurrences.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error message on failure
-
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
-        """
-        ...
-
-StateBackendFactory: TypeAlias = Callable[[ToolRuntime], StateBackendProtocol]
+StateBackendFactory: TypeAlias = Callable[[ToolRuntime], BackendProtocol]

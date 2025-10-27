@@ -3,6 +3,7 @@ from langchain.tools import ToolRuntime
 from langgraph.store.memory import InMemoryStore
 
 from deepagents.backends.store import StoreBackend
+from deepagents.backends.protocol import WriteResult, EditResult
 
 
 def make_runtime():
@@ -22,7 +23,7 @@ def test_store_backend_crud_and_search():
 
     # write new file
     msg = be.write("/docs/readme.md", "hello store")
-    assert isinstance(msg, str) and "Updated file" in msg
+    assert isinstance(msg, WriteResult) and msg.error is None and msg.path == "/docs/readme.md"
 
     # read
     txt = be.read("/docs/readme.md")
@@ -30,7 +31,7 @@ def test_store_backend_crud_and_search():
 
     # edit
     msg2 = be.edit("/docs/readme.md", "hello", "hi", replace_all=False)
-    assert "Successfully replaced" in msg2
+    assert isinstance(msg2, EditResult) and msg2.error is None and msg2.occurrences == 1
 
     # ls_info (path prefix filter)
     infos = be.ls_info("/docs/")
@@ -43,4 +44,3 @@ def test_store_backend_crud_and_search():
     # glob_info
     g = be.glob_info("*.md", path="/")
     assert any(i["path"] == "/docs/readme.md" for i in g)
-

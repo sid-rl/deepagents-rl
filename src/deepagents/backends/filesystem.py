@@ -14,7 +14,6 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
-from langgraph.types import Command
 
 if TYPE_CHECKING:
     from langchain.tools import ToolRuntime
@@ -27,6 +26,7 @@ from .utils import (
 )
 import wcmatch.glob as wcglob
 from deepagents.backends.utils import FileInfo, GrepMatch
+from deepagents.backends.protocol import WriteResult, EditResult
 
 
 
@@ -206,18 +206,14 @@ class FilesystemBackend:
         self, 
         file_path: str,
         content: str,
-    ) -> Command | str:
+    ) -> WriteResult:
         """Create a new file with content.
-        
-        Args:
-            file_path: Absolute or relative file path
-            content: File content as a stringReturns:
-            Success message or error if file already exists.
+        Returns WriteResult. External storage sets files_update=None.
         """
         resolved_path = self._resolve_path(file_path)
         
         if resolved_path.exists():
-            return f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path."
+            return WriteResult(error=f"Cannot write to {file_path} because it already exists. Read and then make an edit, or write to a new path.")
         
         try:
             # Create parent directories if needed
@@ -231,9 +227,9 @@ class FilesystemBackend:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
             
-            return f"Updated file {file_path}"
+            return WriteResult(path=file_path, files_update=None)
         except (OSError, UnicodeEncodeError) as e:
-            return f"Error writing file '{file_path}': {e}"
+            return WriteResult(error=f"Error writing file '{file_path}': {e}")
     
     def edit(
         self, 
@@ -241,20 +237,14 @@ class FilesystemBackend:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-    ) -> Command | str:
+    ) -> EditResult:
         """Edit a file by replacing string occurrences.
-        
-        Args:
-            file_path: Absolute or relative file path
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrencesReturns:
-            Success message or error message on failure.
+        Returns EditResult. External storage sets files_update=None.
         """
         resolved_path = self._resolve_path(file_path)
         
         if not resolved_path.exists() or not resolved_path.is_file():
-            return f"Error: File '{file_path}' not found"
+            return EditResult(error=f"Error: File '{file_path}' not found")
         
         try:
             # Read securely
@@ -269,7 +259,7 @@ class FilesystemBackend:
             result = perform_string_replacement(content, old_string, new_string, replace_all)
             
             if isinstance(result, str):
-                return result
+                return EditResult(error=result)
             
             new_content, occurrences = result
             
@@ -281,9 +271,9 @@ class FilesystemBackend:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(new_content)
             
-            return f"Successfully replaced {occurrences} instance(s) of the string in '{file_path}'"
+            return EditResult(path=file_path, files_update=None, occurrences=int(occurrences))
         except (OSError, UnicodeDecodeError, UnicodeEncodeError) as e:
-            return f"Error editing file '{file_path}': {e}"
+            return EditResult(error=f"Error editing file '{file_path}': {e}")
     
     # Removed legacy grep() convenience to keep lean surface
 

@@ -1,7 +1,7 @@
 import pytest
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
-from langgraph.types import Command
+from deepagents.backends.protocol import WriteResult, EditResult
 
 from deepagents.backends.state import StateBackend
 
@@ -26,12 +26,10 @@ def test_write_read_edit_ls_grep_glob_state_backend():
 
     # write
     res = be.write("/notes.txt", "hello world")
-    assert isinstance(res, Command)
-
-    # apply command to state
-    update = res.update  # type: ignore[attr-defined]
-    rt.state["files"].update(update["files"])  # type: ignore[index]
-    rt.state["messages"].extend(update["messages"])  # type: ignore[index]
+    assert isinstance(res, WriteResult)
+    assert res.error is None and res.files_update is not None
+    # apply state update
+    rt.state["files"].update(res.files_update)
 
     # read
     content = be.read("/notes.txt")
@@ -39,9 +37,9 @@ def test_write_read_edit_ls_grep_glob_state_backend():
 
     # edit unique occurrence
     res2 = be.edit("/notes.txt", "hello", "hi", replace_all=False)
-    assert isinstance(res2, Command)
-    update2 = res2.update  # type: ignore[attr-defined]
-    rt.state["files"].update(update2["files"])  # type: ignore[index]
+    assert isinstance(res2, EditResult)
+    assert res2.error is None and res2.files_update is not None
+    rt.state["files"].update(res2.files_update)
 
     content2 = be.read("/notes.txt")
     assert "hi world" in content2
@@ -69,13 +67,11 @@ def test_state_backend_errors():
 
     # edit missing file
     err = be.edit("/missing.txt", "a", "b")
-    assert isinstance(err, str) and "not found" in err
+    assert isinstance(err, EditResult) and err.error and "not found" in err.error
 
     # write duplicate
     res = be.write("/dup.txt", "x")
-    assert isinstance(res, Command)
-    update = res.update  # type: ignore[attr-defined]
-    rt.state["files"].update(update["files"])  # type: ignore[index]
+    assert isinstance(res, WriteResult) and res.files_update is not None
+    rt.state["files"].update(res.files_update)
     dup_err = be.write("/dup.txt", "y")
-    assert isinstance(dup_err, str) and "already exists" in dup_err
-
+    assert isinstance(dup_err, WriteResult) and dup_err.error and "already exists" in dup_err.error

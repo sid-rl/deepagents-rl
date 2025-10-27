@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from deepagents.backends.filesystem import FilesystemBackend
+from deepagents.backends.protocol import WriteResult, EditResult
 
 
 def write_file(p: Path, content: str):
@@ -27,9 +28,9 @@ def test_filesystem_backend_normal_mode(tmp_path: Path):
     txt = be.read(str(f1))
     assert "hello fs" in txt
     msg = be.edit(str(f1), "fs", "filesystem", replace_all=False)
-    assert "Successfully replaced" in msg
+    assert isinstance(msg, EditResult) and msg.error is None and msg.occurrences == 1
     msg2 = be.write(str(root / "new.txt"), "new content")
-    assert "Updated file" in msg2
+    assert isinstance(msg2, WriteResult) and msg2.error is None and msg2.path.endswith("new.txt")
 
     # grep_raw
     matches = be.grep_raw("hello", path=str(root))
@@ -58,11 +59,11 @@ def test_filesystem_backend_virtual_mode(tmp_path: Path):
     txt = be.read("/a.txt")
     assert "hello virtual" in txt
     msg = be.edit("/a.txt", "virtual", "virt", replace_all=False)
-    assert "Successfully replaced" in msg
+    assert isinstance(msg, EditResult) and msg.error is None and msg.occurrences == 1
 
     # write new file via virtual path
     msg2 = be.write("/new.txt", "x")
-    assert "Updated file" in msg2
+    assert isinstance(msg2, WriteResult) and msg2.error is None
     assert (root / "new.txt").exists()
 
     # grep_raw limited to path

@@ -8,6 +8,7 @@ from deepagents.backends.store import StoreBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.composite import build_composite_state_backend
+from deepagents.backends.protocol import WriteResult
 
 
 def make_runtime(tid: str = "tc"):
@@ -28,11 +29,11 @@ def test_composite_state_backend_routes_and_search(tmp_path: Path):
 
     # write to default (state)
     res = be.write("/file.txt", "alpha")
-    assert hasattr(res, "update")
+    assert isinstance(res, WriteResult) and res.files_update is not None
 
     # write to routed (store)
     msg = be.write("/memories/readme.md", "beta")
-    assert isinstance(msg, str) and "Updated file" in msg
+    assert isinstance(msg, WriteResult) and msg.error is None and msg.files_update is None
 
     # ls_info at root returns both
     infos = be.ls_info("/")
@@ -59,8 +60,10 @@ def test_composite_backend_filesystem_plus_store(tmp_path: Path):
     comp = CompositeBackend(default=fs, routes={"/memories/": store})
 
     # put files in both
-    assert "Updated file" in comp.write("/hello.txt", "hello")
-    assert "Updated file" in comp.write("/memories/notes.md", "note")
+    r1 = comp.write("/hello.txt", "hello")
+    assert isinstance(r1, WriteResult) and r1.error is None and r1.files_update is None
+    r2 = comp.write("/memories/notes.md", "note")
+    assert isinstance(r2, WriteResult) and r2.error is None and r2.files_update is None
 
     # ls_info path routing
     infos_root = comp.ls_info("/")
@@ -77,4 +80,3 @@ def test_composite_backend_filesystem_plus_store(tmp_path: Path):
     # glob_info
     gl = comp.glob_info("*.md", path="/")
     assert any(i["path"] == "/memories/notes.md" for i in gl)
-

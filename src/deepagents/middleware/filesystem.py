@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, StateBackendFactory, BackendFactory
+from deepagents.backends.protocol import BackendProtocol, StateBackendFactory, BackendFactory, WriteResult, EditResult
 from deepagents.backends import StateBackend, CompositeBackend
 from deepagents.backends.utils import (
     create_file_data,
@@ -38,7 +38,6 @@ DEFAULT_READ_OFFSET = 0
 DEFAULT_READ_LIMIT = 2000
 BACKEND_TYPES = (
     BackendProtocol
-    | StateBackendProtocol
     | BackendFactory
     | StateBackendFactory
 )
@@ -228,7 +227,7 @@ All file paths must start with a /.
 - grep: search for text within files"""
 
 
-def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> StateBackendProtocol | BackendProtocol:
+def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> BackendProtocol:
     if callable(backend):
         return backend(runtime)
     return backend
@@ -311,7 +310,21 @@ def _write_file_tool_generator(
     ) -> Command | str:
         resolved_backend = _get_backend(backend, runtime)
         file_path = _validate_path(file_path)
-        return resolved_backend.write(file_path, content)
+        res: WriteResult = resolved_backend.write(file_path, content)
+        if res.error:
+            return res.error
+        # If backend returns state update, wrap into Command with ToolMessage
+        if res.files_update is not None:
+            return Command(update={
+                "files": res.files_update,
+                "messages": [
+                    ToolMessage(
+                        content=f"Updated file {res.path}",
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ],
+            })
+        return f"Updated file {res.path}"
 
     return write_file
 
@@ -342,7 +355,20 @@ def _edit_file_tool_generator(
     ) -> Command | str:
         resolved_backend = _get_backend(backend, runtime)
         file_path = _validate_path(file_path)
-        return resolved_backend.edit(file_path, old_string, new_string, replace_all=replace_all)
+        res: EditResult = resolved_backend.edit(file_path, old_string, new_string, replace_all=replace_all)
+        if res.error:
+            return res.error
+        if res.files_update is not None:
+            return Command(update={
+                "files": res.files_update,
+                "messages": [
+                    ToolMessage(
+                        content=f"Successfully replaced {res.occurrences} instance(s) of the string in '{res.path}'",
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ],
+            })
+        return f"Successfully replaced {res.occurrences} instance(s) of the string in '{res.path}'"
 
     return edit_file
 

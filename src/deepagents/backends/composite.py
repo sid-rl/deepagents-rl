@@ -4,9 +4,8 @@ from typing import Any, Literal, Optional, TYPE_CHECKING
 
 from langchain.tools import ToolRuntime
 
-from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, BackendFactory
+from deepagents.backends.protocol import BackendProtocol, BackendFactory, WriteResult, EditResult
 from deepagents.backends.state import StateBackend
-from langgraph.types import Command
 from deepagents.backends.utils import FileInfo, GrepMatch
 from deepagents.backends.protocol import BackendFactory
 
@@ -176,7 +175,7 @@ class CompositeStateBacked(_CompositeBackend):
             self,
             file_path: str,
             content: str,
-    ) -> Command | str:
+    ) -> WriteResult:
         """Create a new file, routing to appropriate backend.
 
         Args:
@@ -186,20 +185,13 @@ class CompositeStateBacked(_CompositeBackend):
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         res = backend.write(stripped_key, content)
-        # If a state Command is returned, apply it to the runtime immediately
-        # so listings reflect the change in test contexts.
-        if isinstance(res, Command):
+        # If this is a state-backed update, merge so listings reflect changes
+        if res.files_update:
             try:
-                update = res.update  # type: ignore[attr-defined]
                 state = self.default.runtime.state
-                # Merge files
                 files = state.get("files", {})
-                files.update(update.get("files", {}))
+                files.update(res.files_update)
                 state["files"] = files
-                # Append messages
-                msgs = state.get("messages", [])
-                msgs.extend(update.get("messages", []))
-                state["messages"] = msgs
             except Exception:
                 pass
         return res
@@ -210,7 +202,7 @@ class CompositeStateBacked(_CompositeBackend):
             old_string: str,
             new_string: str,
             replace_all: bool = False,
-    ) -> Command | str:
+    ) -> EditResult:
         """Edit a file, routing to appropriate backend.
 
         Args:
@@ -222,16 +214,12 @@ class CompositeStateBacked(_CompositeBackend):
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         res = backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
-        if isinstance(res, Command):
+        if res.files_update:
             try:
-                update = res.update  # type: ignore[attr-defined]
                 state = self.default.runtime.state
                 files = state.get("files", {})
-                files.update(update.get("files", {}))
+                files.update(res.files_update)
                 state["files"] = files
-                msgs = state.get("messages", [])
-                msgs.extend(update.get("messages", []))
-                state["messages"] = msgs
             except Exception:
                 pass
         return res
@@ -242,7 +230,7 @@ class CompositeBackend(_CompositeBackend):
             self,
             file_path: str,
             content: str,
-    ) -> str:
+    ) -> WriteResult:
         """Create a new file, routing to appropriate backend.
 
         Args:
@@ -259,7 +247,7 @@ class CompositeBackend(_CompositeBackend):
             old_string: str,
             new_string: str,
             replace_all: bool = False,
-    ) -> str:
+    ) -> EditResult:
         """Edit a file, routing to appropriate backend.
 
         Args:
@@ -277,7 +265,7 @@ def build_composite_state_backend(
     runtime: ToolRuntime,
     *,
     routes: dict[str, BackendProtocol | BackendFactory],
-) -> StateBackendProtocol:
+) -> BackendProtocol:
     built_routes: dict[str, BackendProtocol] = {}
     for k, v in routes.items():
         if isinstance(v, BackendProtocol):
