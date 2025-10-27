@@ -294,33 +294,6 @@ agent = create_deep_agent(
 )
 ```
 
-### `backend`
-Deep agents come with a local filesystem to offload memory to. By default, this filesystem is stored in state (ephemeral, transient to a single thread).
-
-You can configure persistent long-term memory using a composite backend that routes a path prefix (for example, `/memories/`) to a persistent store.
-
-```python
-from deepagents import create_deep_agent
-from deepagents.backends import build_composite_state_backend, StoreBackend
-from langgraph.store.memory import InMemoryStore
-
-store = InMemoryStore()  # Or any other Store implementation
-
-# Provide a backend factory to the agent/middleware.
-# This builds a state-backed composite at runtime and routes /memories/ to StoreBackend.
-backend_factory = lambda rt: build_composite_state_backend(
-    rt,
-    routes={
-        "/memories/": (lambda r: StoreBackend(r)),
-    },
-)
-
-agent = create_deep_agent(
-    backend=backend_factory,
-    store=store,
-)
-```
-
 ### `interrupt_on`
 A common reality for agents is that some tool operations may be sensitive and require human approval before execution. Deep Agents supports human-in-the-loop workflows through LangGraph’s interrupt capabilities. You can configure which tools require approval using a checkpointer.
 
@@ -393,11 +366,7 @@ Context engineering is one of the main challenges in building effective agents. 
 ```python
 from langchain.agents import create_agent
 from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.backends import (
-    StateBackend,
-    CompositeBackend,
-    StoreBackend,
-)
+
 
 # FilesystemMiddleware is included by default in create_deep_agent
 # You can customize it if building a custom agent
@@ -405,12 +374,7 @@ agent = create_agent(
     model="anthropic:claude-sonnet-4-20250514",
     middleware=[
         FilesystemMiddleware(
-            backend=(lambda rt: StateBackend(rt)),  # Optional: customize storage backend (defaults to lambda rt: )
-            # For persistent memory, use CompositeBackend:
-            # backend=CompositeBackend(
-            #     default=lambda rt: StateBackend(rt)
-            #     routes={"/memories/": lambda rt: StoreBackend(rt)}
-            # )
+            backend=..., # Optional: customize storage backend
             system_prompt="Write to the filesystem when...",  # Optional custom system prompt override
             custom_tool_descriptions={
                 "ls": "Use the ls tool when...",
