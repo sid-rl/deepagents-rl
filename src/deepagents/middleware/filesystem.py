@@ -25,6 +25,7 @@ from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, 
 from deepagents.backends import StateBackend, CompositeBackend
 from deepagents.backends.utils import (
     create_file_data,
+    update_file_data,
     format_content_with_line_numbers,
     format_grep_matches,
     truncate_if_too_long,
@@ -491,7 +492,7 @@ class FilesystemMiddleware(AgentMiddleware):
         """Initialize the filesystem middleware.
 
         Args:
-            memory_backend: Backend for file storage. Defaults to StateBackend if not provided.
+            backend: Backend for file storage, or a factory callable. Defaults to StateBackend if not provided.
             system_prompt: Optional custom system prompt override.
             custom_tool_descriptions: Optional custom tool descriptions override.
             tool_token_limit_before_evict: Optional token limit before evicting a tool result to the filesystem.
@@ -631,3 +632,10 @@ class FilesystemMiddleware(AgentMiddleware):
 
         tool_result = await handler(request)
         return self._intercept_large_tool_result(tool_result)
+
+# Back-compat aliases expected by some tests
+def _create_file_data(content: str):
+    return create_file_data(content)
+
+def _update_file_data(file_data: dict, content: str):
+    return update_file_data(file_data, content)

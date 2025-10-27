@@ -4,7 +4,7 @@ from typing import Any, Literal, Optional, TYPE_CHECKING
 
 from langchain.tools import ToolRuntime
 
-from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol
+from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, BackendFactory
 from deepagents.backends.state import StateBackend
 from langgraph.types import Command
 from deepagents.backends.utils import FileInfo, GrepMatch
@@ -231,7 +231,7 @@ class CompositeBackend(_CompositeBackend):
 def build_composite_state_backend(
     runtime: ToolRuntime,
     *,
-    routes: dict[str, BackendProtocol | "BackendFactory"],
+    routes: dict[str, BackendProtocol | BackendFactory],
 ) -> StateBackendProtocol:
     built_routes: dict[str, BackendProtocol] = {}
     for k, v in routes.items():

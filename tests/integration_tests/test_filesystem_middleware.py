@@ -13,7 +13,7 @@ from deepagents.middleware.filesystem import (
     FileData,
     FilesystemMiddleware,
 )
-from deepagents.memory.backends import StateBackend, StoreBackend, CompositeBackend
+from deepagents.backends import StateBackend, StoreBackend, CompositeBackend
 from tests.utils import ResearchMiddleware, get_la_liga_standings, get_nba_standings, get_nfl_standings, get_premier_league_standings
 
 
@@ -40,7 +40,7 @@ class TestFilesystem:
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
                 FilesystemMiddleware(
-                    memory_backend=backend,
+                    backend=backend,
                     system_prompt="In every single response, you must say the word 'pizza'! You love it!",
                 )
             ],
@@ -77,7 +77,7 @@ class TestFilesystem:
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
                 FilesystemMiddleware(
-                    memory_backend=CompositeBackend(default=StateBackend(), routes={"/memories/": StoreBackend()}),
+                    backend=CompositeBackend(default=StateBackend(), routes={"/memories/": StoreBackend()}),
                     custom_tool_descriptions={
                         "ls": "Charmander",
                         "read_file": "Bulbasaur",
