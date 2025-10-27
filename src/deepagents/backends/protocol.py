@@ -15,49 +15,23 @@ from langchain.tools import ToolRuntime
 
 @dataclass
 class WriteResult:
-    """Result of a file write operation (creating a new file).
-
-    This class provides a consistent return type for write operations across all
-    backends, regardless of whether they manage their own storage or rely on
-    framework-managed storage.
+    """Result from backend write operations.
 
     Attributes:
-        error:
-            None on success.
-            String error message on failure.
-
-        path:
-            Absolute path of the file that was written.
-            None on failure.
-
-        content:
-            Full file content that was written.
-            May be None if the write failed, or if the backend
-            chooses not to return file contents.
-
-        files_update:
-            For checkpoint storage backends (e.g., StateBackend):
-                A {file_path: file_data} mapping representing the new canonical
-                state for those files. The tool layer is responsible for merging
-                this into LangGraph state (persisted via checkpoints).
-
-            For external storage backends (e.g., FilesystemBackend, S3Backend, StoreBackend):
-                None, because the backend has already committed the change to
-                its external storage system (disk, S3, database, BaseStore, etc.).
+        error: Error message on failure, None on success.
+        path: Absolute path of written file, None on failure.
+        content: Written file content, may be None.
+        files_update: State update dict for checkpoint backends, None for external storage.
+            Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
+            External backends set None (already persisted to disk/S3/database/etc).
 
     Examples:
-        Checkpoint storage backend (StateBackend):
-        >>> WriteResult(path="/notes.txt", content="Hello world", files_update={"/notes.txt": {"content": [...], "created_at": ...}})
-
-        External storage backend (FilesystemBackend):
-        >>> WriteResult(
-        ...     path="/notes.txt",
-        ...     content="Hello world",
-        ...     files_update=None,  # Already written to disk
-        ... )
-
-        Error case:
-        >>> WriteResult(error="File already exists")
+        >>> # Checkpoint storage
+        >>> WriteResult(path="/f.txt", content="hi", files_update={"/f.txt": {...}})
+        >>> # External storage
+        >>> WriteResult(path="/f.txt", content="hi", files_update=None)
+        >>> # Error
+        >>> WriteResult(error="File exists")
     """
 
     error: str | None = None
@@ -68,53 +42,23 @@ class WriteResult:
 
 @dataclass
 class EditResult:
-    """Result of a file edit operation (modifying an existing file).
-
-    This class provides a consistent return type for edit operations across all
-    backends, regardless of whether they manage their own storage or rely on
-    framework-managed storage.
+    """Result from backend edit operations.
 
     Attributes:
-        error:
-            None on success.
-            String error message on failure.
-
-        path:
-            Absolute path of the file that was edited.
-            None on failure.
-
-        content:
-            Full file content after the edit.
-            May be None if the edit failed, or if the backend
-            chooses not to return file contents.
-
-        files_update:
-            For checkpoint storage backends (e.g., StateBackend):
-                A {file_path: file_data} mapping representing the new canonical
-                state for those files. The tool layer is responsible for merging
-                this into LangGraph state (persisted via checkpoints).
-
-            For external storage backends (e.g., FilesystemBackend, S3Backend, StoreBackend):
-                None, because the backend has already committed the change to
-                its external storage system (disk, S3, database, BaseStore, etc.).
-
-        occurrences:
-            Number of string occurrences that were replaced.
-            None on failure or if not applicable.
+        error: Error message on failure, None on success.
+        path: Absolute path of edited file, None on failure.
+        content: File content after edit, may be None.
+        files_update: State update dict for checkpoint backends, None for external storage.
+            Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
+            External backends set None (already persisted to disk/S3/database/etc).
+        occurrences: Number of replacements made, None on failure.
 
     Examples:
-        Checkpoint storage backend (StateBackend):
-        >>> EditResult(path="/notes.txt", content="Hello world", files_update={"/notes.txt": {"content": [...], "modified_at": ...}}, occurrences=1)
-
-        External storage backend (FilesystemBackend):
-        >>> EditResult(
-        ...     path="/notes.txt",
-        ...     content="Hello world",
-        ...     files_update=None,  # Already written to disk
-        ...     occurrences=3,
-        ... )
-
-        Error case:
+        >>> # Checkpoint storage
+        >>> EditResult(path="/f.txt", content="new", files_update={"/f.txt": {...}}, occurrences=1)
+        >>> # External storage
+        >>> EditResult(path="/f.txt", content="new", files_update=None, occurrences=2)
+        >>> # Error
         >>> EditResult(error="File not found")
     """
 
@@ -322,4 +266,5 @@ class Backend(ABC):
 # Type alias for backend factory functions
 # A backend provider is any callable that takes a ToolRuntime and returns a Backend instance
 BackendProvider = Callable[[ToolRuntime], Backend]
+# We'll need to support an async variant as well.
 AsyncBackendProvider = Callable[[ToolRuntime], Awaitable[Backend]]
