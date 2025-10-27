@@ -22,7 +22,7 @@ from langgraph.types import Command
 from typing_extensions import TypedDict
 
 from deepagents.backends.protocol import BackendProtocol, BackendFactory, WriteResult, EditResult
-from deepagents.backends import StateBackend, CompositeBackend
+from deepagents.backends import StateBackend
 from deepagents.backends.utils import (
     create_file_data,
     update_file_data,

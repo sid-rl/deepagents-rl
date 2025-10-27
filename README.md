@@ -394,9 +394,9 @@ Context engineering is one of the main challenges in building effective agents. 
 from langchain.agents import create_agent
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import (
-    StateBackendProvider,
-    CompositeStateBackendProvider,
-    StoreBackendProvider,
+    StateBackend,
+    CompositeBackend,
+    StoreBackend,
 )
 
 # FilesystemMiddleware is included by default in create_deep_agent
@@ -405,10 +405,11 @@ agent = create_agent(
     model="anthropic:claude-sonnet-4-20250514",
     middleware=[
         FilesystemMiddleware(
-            backend=StateBackendProvider(),  # Optional: customize storage backend (defaults to StateBackendProvider)
-            # For persistent memory, use CompositeStateBackendProvider:
-            # backend=CompositeStateBackendProvider(
-            #     routes={"/memories/": StoreBackendProvider()}
+            backend=lambda rt: StateBackend(rt),  # Optional: customize storage backend (defaults to lambda rt: )
+            # For persistent memory, use CompositeBackend:
+            # backend=CompositeBackend(
+            #     default=lambda rt: StateBackend(rt)
+            #     routes={"/memories/": lambda rt: StoreBackend(rt)}
             # )
             system_prompt="Write to the filesystem when...",  # Optional custom system prompt override
             custom_tool_descriptions={
