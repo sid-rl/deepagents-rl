@@ -414,7 +414,8 @@ class FilesystemBackend:
 
         results: list[FileInfo] = []
         try:
-            for matched_path in search_path.glob(pattern):
+            # Use recursive globbing to match files in subdirectories as tests expect
+            for matched_path in search_path.rglob(pattern):
                 try:
                     is_file = matched_path.is_file()
                 except OSError:

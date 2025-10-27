@@ -55,21 +55,39 @@ class StoreBackend:
     def _get_namespace(self) -> tuple[str, ...]:
         """Get the namespace for store operations.
         
-        Returns a tuple for organizing files in the store. If an assistant_id is
-        available in the config metadata, returns (assistant_id, "filesystem") to
-        provide per-assistant isolation. Otherwise, returns ("filesystem",).
+        Preference order:
+        1) Use `self.runtime.config` if present (tests pass this explicitly).
+        2) Fallback to `langgraph.config.get_config()` if available.
+        3) Default to ("filesystem",).
         
-        Returns:
-            Namespace tuple for store operations.
+        If an assistant_id is available in the config metadata, return
+        (assistant_id, "filesystem") to provide per-assistant isolation.
         """
         namespace = "filesystem"
-        config = get_config()
-        if config is None:
+
+        # Prefer the runtime-provided config when present
+        runtime_cfg = getattr(self.runtime, "config", None)
+        if isinstance(runtime_cfg, dict):
+            assistant_id = runtime_cfg.get("metadata", {}).get("assistant_id")
+            if assistant_id:
+                return (assistant_id, namespace)
             return (namespace,)
-        assistant_id = config.get("metadata", {}).get("assistant_id")
-        if assistant_id is None:
+
+        # Fallback to langgraph's context, but guard against errors when
+        # called outside of a runnable context
+        try:
+            cfg = get_config()
+        except Exception:
             return (namespace,)
-        return (assistant_id, namespace)
+
+        try:
+            assistant_id = cfg.get("metadata", {}).get("assistant_id")  # type: ignore[assignment]
+        except Exception:
+            assistant_id = None
+
+        if assistant_id:
+            return (assistant_id, namespace)
+        return (namespace,)
     
     def _convert_store_item_to_file_data(self, store_item: Item) -> dict[str, Any]:
         """Convert a store Item to FileData format.
@@ -172,10 +190,13 @@ class StoreBackend:
         store = self._get_store()
         namespace = self._get_namespace()
         
-        # Search store with path filter
-        items = self._search_store_paginated(store, namespace, filter={"prefix": path})
+        # Retrieve all items and filter by path prefix locally to avoid
+        # coupling to store-specific filter semantics
+        items = self._search_store_paginated(store, namespace)
         infos: list[FileInfo] = []
         for item in items:
+            if not str(item.key).startswith(path):
+                continue
             try:
                 fd = self._convert_store_item_to_file_data(item)
             except ValueError:

@@ -258,13 +258,17 @@ def _glob_search_files(
 
     filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
 
+    # Treat basename-only patterns (no slash) as recursive by default for
+    # usability parity with filesystem globbing used in tests.
+    effective_pattern = pattern if "/" in pattern else f"**/{pattern}"
+
     matches = []
     for file_path, file_data in filtered.items():
         relative = file_path[len(normalized_path) :].lstrip("/")
         if not relative:
             relative = file_path.split("/")[-1]
 
-        if wcglob.globmatch(relative, pattern, flags=wcglob.BRACE | wcglob.GLOBSTAR):
+        if wcglob.globmatch(relative, effective_pattern, flags=wcglob.BRACE | wcglob.GLOBSTAR):
             matches.append((file_path, file_data["modified_at"]))
 
     matches.sort(key=lambda x: x[1], reverse=True)

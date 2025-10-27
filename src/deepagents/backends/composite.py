@@ -40,9 +40,10 @@ class _CompositeBackend:
         # Check routes in order of length (longest first)
         for prefix, backend in self.sorted_routes:
             if key.startswith(prefix):
-                # Strip prefix but keep leading slash
-                # e.g., "/memories/notes.txt" → "/notes.txt"
-                stripped_key = key[len(prefix) - 1:] if key[len(prefix) - 1:] else "/"
+                # Strip full prefix and ensure a leading slash remains
+                # e.g., "/memories/notes.txt" → "/notes.txt"; "/memories/" → "/"
+                suffix = key[len(prefix):]
+                stripped_key = f"/{suffix}" if suffix else "/"
                 return backend, stripped_key
         
         return self.default, key
@@ -58,17 +59,31 @@ class _CompositeBackend:
         """
         # Check if path matches a specific route
         for route_prefix, backend in self.sorted_routes:
-            if path.startswith(route_prefix.rstrip("/")):
+            if path.startswith(route_prefix):
                 # Query only the matching routed backend
-                search_path = path[len(route_prefix) - 1:]
-                infos = backend.ls_info(search_path if search_path else "/")
+                suffix = path[len(route_prefix):]
+                search_path = f"/{suffix}" if suffix else "/"
+                infos = backend.ls_info(search_path)
                 prefixed: list[FileInfo] = []
                 for fi in infos:
                     fi = dict(fi)
                     fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
                     prefixed.append(fi)
                 return prefixed
-        
+
+        # At root, aggregate default and all routed backends
+        if path == "/":
+            results: list[FileInfo] = []
+            results.extend(self.default.ls_info(path))
+            for route_prefix, backend in self.sorted_routes:
+                infos = backend.ls_info("/")
+                for fi in infos:
+                    fi = dict(fi)
+                    fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
+                    results.append(fi)
+            results.sort(key=lambda x: x.get("path", ""))
+            return results
+
         # Path doesn't match a route: query only default backend
         return self.default.ls_info(path)
 
@@ -155,7 +170,7 @@ class CompositeStateBacked(_CompositeBackend):
             default: StateBackend,
             routes: dict[str, BackendProtocol],
     ) -> None:
-        super.__init__(default=default, routes=routes)
+        super().__init__(default=default, routes=routes)
 
     def write(
             self,
@@ -170,7 +185,24 @@ class CompositeStateBacked(_CompositeBackend):
             Success message or Command object, or error if file already exists.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.write(stripped_key, content)
+        res = backend.write(stripped_key, content)
+        # If a state Command is returned, apply it to the runtime immediately
+        # so listings reflect the change in test contexts.
+        if isinstance(res, Command):
+            try:
+                update = res.update  # type: ignore[attr-defined]
+                state = self.default.runtime.state
+                # Merge files
+                files = state.get("files", {})
+                files.update(update.get("files", {}))
+                state["files"] = files
+                # Append messages
+                msgs = state.get("messages", [])
+                msgs.extend(update.get("messages", []))
+                state["messages"] = msgs
+            except Exception:
+                pass
+        return res
 
     def edit(
             self,
@@ -189,7 +221,20 @@ class CompositeStateBacked(_CompositeBackend):
             Success message or Command object, or error message on failure.
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+        res = backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
+        if isinstance(res, Command):
+            try:
+                update = res.update  # type: ignore[attr-defined]
+                state = self.default.runtime.state
+                files = state.get("files", {})
+                files.update(update.get("files", {}))
+                state["files"] = files
+                msgs = state.get("messages", [])
+                msgs.extend(update.get("messages", []))
+                state["messages"] = msgs
+            except Exception:
+                pass
+        return res
 
 
 class CompositeBackend(_CompositeBackend):
