@@ -405,7 +405,7 @@ agent = create_agent(
     model="anthropic:claude-sonnet-4-20250514",
     middleware=[
         FilesystemMiddleware(
-            backend=lambda rt: StateBackend(rt),  # Optional: customize storage backend (defaults to lambda rt: )
+            backend=(lambda rt: StateBackend(rt)),  # Optional: customize storage backend (defaults to lambda rt: )
             # For persistent memory, use CompositeBackend:
             # backend=CompositeBackend(
             #     default=lambda rt: StateBackend(rt)

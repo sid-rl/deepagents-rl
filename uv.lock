@@ -360,6 +360,7 @@ dependencies = [
     { name = "langchain" },
     { name = "langchain-anthropic" },
     { name = "langchain-core" },
+    { name = "wcmatch" },
 ]
 
 [package.optional-dependencies]
@@ -369,7 +370,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "twine" },
-    { name = "wcmatch" },
 ]
 
 [package.dev-dependencies]
@@ -390,7 +390,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "twine", marker = "extra == 'dev'" },
-    { name = "wcmatch", marker = "extra == 'dev'" },
+    { name = "wcmatch" },
 ]
 provides-extras = ["dev"]
 
