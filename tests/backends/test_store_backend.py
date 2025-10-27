@@ -43,4 +43,7 @@ def test_store_backend_crud_and_search():
 
     # glob_info
     g = be.glob_info("*.md", path="/")
-    assert any(i["path"] == "/docs/readme.md" for i in g)
+    assert len(g) == 0
+
+    g2 = be.glob_info("**/*.md", path="/")
+    assert any(i["path"] == "/docs/readme.md" for i in g2)

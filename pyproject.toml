@@ -17,7 +17,8 @@ dev = [
     "pytest-cov",
     "build",
     "twine",
-    "langchain-openai"
+    "langchain-openai",
+    "wcmatch"
 ]
 
 [dependency-groups]

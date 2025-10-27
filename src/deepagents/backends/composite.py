@@ -58,7 +58,7 @@ class CompositeBackend:
         """
         # Check if path matches a specific route
         for route_prefix, backend in self.sorted_routes:
-            if path.startswith(route_prefix):
+            if path.startswith(route_prefix.rstrip("/")):
                 # Query only the matching routed backend
                 suffix = path[len(route_prefix):]
                 search_path = f"/{suffix}" if suffix else "/"
