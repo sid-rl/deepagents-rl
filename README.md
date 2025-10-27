@@ -297,26 +297,27 @@ agent = create_deep_agent(
 ### `backend`
 Deep agents come with a local filesystem to offload memory to. By default, this filesystem is stored in state (ephemeral, transient to a single thread).
 
-You can configure persistent long-term memory using a CompositeBackend with StoreBackend:
+You can configure persistent long-term memory using a composite backend that routes a path prefix (for example, `/memories/`) to a persistent store.
 
 ```python
 from deepagents import create_deep_agent
-from deepagents.backends import (
-    CompositeStateBackendProvider,
-    StoreBackendProvider,
-)
+from deepagents.backends import build_composite_state_backend, StoreBackend
 from langgraph.store.memory import InMemoryStore
 
-store = InMemoryStore()  # Or any other Store object
+store = InMemoryStore()  # Or any other Store implementation
 
-# Create a hybrid backend: ephemeral files in / and persistent files in /memories/
-backend = CompositeStateBackendProvider(
-    routes={"/memories/": StoreBackendProvider()}
+# Provide a backend factory to the agent/middleware.
+# This builds a state-backed composite at runtime and routes /memories/ to StoreBackend.
+backend_factory = lambda rt: build_composite_state_backend(
+    rt,
+    routes={
+        "/memories/": (lambda r: StoreBackend(r)),
+    },
 )
 
 agent = create_deep_agent(
-    backend=backend,
-    store=store
+    backend=backend_factory,
+    store=store,
 )
 ```
 
