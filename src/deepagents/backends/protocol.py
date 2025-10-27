@@ -20,23 +20,21 @@ class WriteResult:
     Attributes:
         error: Error message on failure, None on success.
         path: Absolute path of written file, None on failure.
-        content: Written file content, may be None.
         files_update: State update dict for checkpoint backends, None for external storage.
             Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
             External backends set None (already persisted to disk/S3/database/etc).
 
     Examples:
         >>> # Checkpoint storage
-        >>> WriteResult(path="/f.txt", content="hi", files_update={"/f.txt": {...}})
+        >>> WriteResult(path="/f.txt", files_update={"/f.txt": {...}})
         >>> # External storage
-        >>> WriteResult(path="/f.txt", content="hi", files_update=None)
+        >>> WriteResult(path="/f.txt", files_update=None)
         >>> # Error
         >>> WriteResult(error="File exists")
     """
 
     error: str | None = None
     path: str | None = None
-    content: str | None = None
     files_update: dict[str, Any] | None = None
 
 
@@ -47,7 +45,6 @@ class EditResult:
     Attributes:
         error: Error message on failure, None on success.
         path: Absolute path of edited file, None on failure.
-        content: File content after edit, may be None.
         files_update: State update dict for checkpoint backends, None for external storage.
             Checkpoint backends populate this with {file_path: file_data} for LangGraph state.
             External backends set None (already persisted to disk/S3/database/etc).
@@ -55,16 +52,15 @@ class EditResult:
 
     Examples:
         >>> # Checkpoint storage
-        >>> EditResult(path="/f.txt", content="new", files_update={"/f.txt": {...}}, occurrences=1)
+        >>> EditResult(path="/f.txt", files_update={"/f.txt": {...}}, occurrences=1)
         >>> # External storage
-        >>> EditResult(path="/f.txt", content="new", files_update=None, occurrences=2)
+        >>> EditResult(path="/f.txt", files_update=None, occurrences=2)
         >>> # Error
         >>> EditResult(error="File not found")
     """
 
     error: str | None = None
     path: str | None = None
-    content: str | None = None
     files_update: dict[str, Any] | None = None
     occurrences: int | None = None
 

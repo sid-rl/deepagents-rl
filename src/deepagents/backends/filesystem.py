@@ -208,7 +208,6 @@ class FilesystemBackend(Backend):
 
             return WriteResult(
                 path=file_path,
-                content=content,
                 files_update=None,  # External storage: already persisted to disk
             )
         except (OSError, UnicodeEncodeError) as e:
@@ -265,7 +264,6 @@ class FilesystemBackend(Backend):
 
             return EditResult(
                 path=file_path,
-                content=new_content,
                 files_update=None,  # External storage: already persisted to disk
                 occurrences=occurrences,
             )

@@ -95,7 +95,7 @@ class StateBackend(Backend):
 
         new_file_data = create_file_data(content)
 
-        return WriteResult(path=file_path, content=content, files_update={file_path: new_file_data})
+        return WriteResult(path=file_path, files_update={file_path: new_file_data})
 
     def edit(
         self,
@@ -131,7 +131,7 @@ class StateBackend(Backend):
         new_content, occurrences = result
         new_file_data = update_file_data(file_data, new_content)
 
-        return EditResult(path=file_path, content=new_content, files_update={file_path: new_file_data}, occurrences=occurrences)
+        return EditResult(path=file_path, files_update={file_path: new_file_data}, occurrences=occurrences)
 
     def grep(
         self,

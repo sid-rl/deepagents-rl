@@ -242,7 +242,6 @@ class StoreBackend(Backend):
 
         return WriteResult(
             path=file_path,
-            content=content,
             files_update=None,  # External storage: already persisted to store
         )
 
@@ -293,7 +292,6 @@ class StoreBackend(Backend):
 
         return EditResult(
             path=file_path,
-            content=new_content,
             files_update=None,  # External storage: already persisted to store
             occurrences=occurrences,
         )
