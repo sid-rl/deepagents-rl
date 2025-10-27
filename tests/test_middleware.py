@@ -19,12 +19,7 @@ from deepagents.middleware.filesystem import (
     _create_file_data,
     _update_file_data,
 )
-from deepagents.backends import StoreBackend, CompositeBackend
-from deepagents.backends import (
-    CompositeStateBackendProvider,
-    StoreBackendProvider,
-    StateBackendProvider,
-)
+from deepagents.backends import StoreBackend, CompositeBackend, build_composite_state_backend
 
 from deepagents.backends.utils import create_file_data, update_file_data
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
@@ -66,47 +61,41 @@ class TestAddMiddleware:
 class TestFilesystemMiddleware:
     def test_init_default(self):
         middleware = FilesystemMiddleware()
-        assert isinstance(middleware.backend, StateBackendProvider)
+        assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
     def test_init_with_composite_backend(self):
-        backend = CompositeStateBackendProvider(
-            routes={"/memories/": StoreBackendProvider()}
-        )
-        middleware = FilesystemMiddleware(backend=backend)
-        assert isinstance(middleware.backend, CompositeStateBackendProvider)
+        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+        middleware = FilesystemMiddleware(backend=backend_factory)
+        assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
     def test_init_custom_system_prompt_default(self):
         middleware = FilesystemMiddleware(system_prompt="Custom system prompt")
-        assert isinstance(middleware.backend, StateBackendProvider)
+        assert callable(middleware.backend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
     def test_init_custom_system_prompt_with_composite(self):
-        backend = CompositeStateBackendProvider(
-            routes={"/memories/": StoreBackendProvider()}
-        )
-        middleware = FilesystemMiddleware(backend=backend, system_prompt="Custom system prompt")
-        assert isinstance(middleware.backend, CompositeStateBackendProvider)
+        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+        middleware = FilesystemMiddleware(backend=backend_factory, system_prompt="Custom system prompt")
+        assert callable(middleware.backend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
     def test_init_custom_tool_descriptions_default(self):
         middleware = FilesystemMiddleware(custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert isinstance(middleware.backend, StateBackendProvider)
+        assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
     def test_init_custom_tool_descriptions_with_composite(self):
-        backend = CompositeStateBackendProvider(
-            routes={"/memories/": StoreBackendProvider()}
-        )
-        middleware = FilesystemMiddleware(backend=backend, custom_tool_descriptions={"ls": "Custom ls tool description"})
-        assert isinstance(middleware.backend, CompositeStateBackendProvider)
+        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+        middleware = FilesystemMiddleware(backend=backend_factory, custom_tool_descriptions={"ls": "Custom ls tool description"})
+        assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
