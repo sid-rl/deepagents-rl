@@ -258,9 +258,11 @@ def _glob_search_files(
 
     filtered = {fp: fd for fp, fd in files.items() if fp.startswith(normalized_path)}
 
-    # Treat basename-only patterns (no slash) as recursive by default for
-    # usability parity with filesystem globbing used in tests.
-    effective_pattern = pattern if "/" in pattern else f"**/{pattern}"
+    # Respect standard glob semantics:
+    # - Patterns without path separators (e.g., "*.py") match only in the current
+    #   directory (non-recursive) relative to `path`.
+    # - Use "**" explicitly for recursive matching.
+    effective_pattern = pattern
 
     matches = []
     for file_path, file_data in filtered.items():
