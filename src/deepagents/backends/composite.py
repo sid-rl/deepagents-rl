@@ -10,7 +10,7 @@ from deepagents.backends.utils import FileInfo, GrepMatch
 from deepagents.backends.protocol import BackendFactory
 
 
-class _CompositeBackend:
+class CompositeBackend:
     
     def __init__(
         self,
@@ -86,7 +86,7 @@ class _CompositeBackend:
         # Path doesn't match a route: query only default backend
         return self.default.ls_info(path)
 
-    
+
     def read(
         self, 
         file_path: str,
@@ -162,15 +162,6 @@ class _CompositeBackend:
         return results
 
 
-class CompositeStateBacked(_CompositeBackend):
-
-    def __init__(
-            self,
-            default: StateBackend,
-            routes: dict[str, BackendProtocol],
-    ) -> None:
-        super().__init__(default=default, routes=routes)
-
     def write(
             self,
             file_path: str,
@@ -185,13 +176,15 @@ class CompositeStateBacked(_CompositeBackend):
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         res = backend.write(stripped_key, content)
-        # If this is a state-backed update, merge so listings reflect changes
+        # If this is a state-backed update and default has state, merge so listings reflect changes
         if res.files_update:
             try:
-                state = self.default.runtime.state
-                files = state.get("files", {})
-                files.update(res.files_update)
-                state["files"] = files
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
             except Exception:
                 pass
         return res
@@ -216,49 +209,15 @@ class CompositeStateBacked(_CompositeBackend):
         res = backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
         if res.files_update:
             try:
-                state = self.default.runtime.state
-                files = state.get("files", {})
-                files.update(res.files_update)
-                state["files"] = files
+                runtime = getattr(self.default, "runtime", None)
+                if runtime is not None:
+                    state = runtime.state
+                    files = state.get("files", {})
+                    files.update(res.files_update)
+                    state["files"] = files
             except Exception:
                 pass
         return res
-
-
-class CompositeBackend(_CompositeBackend):
-    def write(
-            self,
-            file_path: str,
-            content: str,
-    ) -> WriteResult:
-        """Create a new file, routing to appropriate backend.
-
-        Args:
-            file_path: Absolute file path
-            content: File content as a stringReturns:
-            Success message or Command object, or error if file already exists.
-        """
-        backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.write(stripped_key, content)
-
-    def edit(
-            self,
-            file_path: str,
-            old_string: str,
-            new_string: str,
-            replace_all: bool = False,
-    ) -> EditResult:
-        """Edit a file, routing to appropriate backend.
-
-        Args:
-            file_path: Absolute file path
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrencesReturns:
-            Success message or Command object, or error message on failure.
-        """
-        backend, stripped_key = self._get_backend_and_key(file_path)
-        return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
 
 
 def build_composite_state_backend(
@@ -272,6 +231,5 @@ def build_composite_state_backend(
             built_routes[k] = v
         else:
             built_routes[k] = v(runtime)
-
     default_state = StateBackend(runtime)
-    return CompositeStateBacked(default=default_state, routes=built_routes)
+    return CompositeBackend(default=default_state, routes=built_routes)
