@@ -657,10 +657,3 @@ class FilesystemMiddleware(AgentMiddleware):
 
         tool_result = await handler(request)
         return self._intercept_large_tool_result(tool_result)
-
-# Back-compat aliases expected by some tests
-def _create_file_data(content: str):
-    return create_file_data(content)
-
-def _update_file_data(file_data: dict, content: str):
-    return update_file_data(file_data, content)

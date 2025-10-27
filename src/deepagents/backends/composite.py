@@ -220,16 +220,4 @@ class CompositeBackend:
         return res
 
 
-def build_composite_state_backend(
-    runtime: ToolRuntime,
-    *,
-    routes: dict[str, BackendProtocol | BackendFactory],
-) -> BackendProtocol:
-    built_routes: dict[str, BackendProtocol] = {}
-    for k, v in routes.items():
-        if isinstance(v, BackendProtocol):
-            built_routes[k] = v
-        else:
-            built_routes[k] = v(runtime)
-    default_state = StateBackend(runtime)
-    return CompositeBackend(default=default_state, routes=built_routes)
+ 

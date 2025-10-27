@@ -7,7 +7,6 @@ from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends.store import StoreBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.composite import CompositeBackend
-from deepagents.backends.composite import build_composite_state_backend
 from deepagents.backends.protocol import WriteResult
 
 
@@ -20,6 +19,16 @@ def make_runtime(tid: str = "tc"):
         stream_writer=lambda _: None,
         config={},
     )
+
+def build_composite_state_backend(runtime: ToolRuntime, *, routes):
+    built_routes = {}
+    for prefix, backend_or_factory in routes.items():
+        if callable(backend_or_factory):
+            built_routes[prefix] = backend_or_factory(runtime)
+        else:
+            built_routes[prefix] = backend_or_factory
+    default_state = StateBackend(runtime)
+    return CompositeBackend(default=default_state, routes=built_routes)
 
 
 def test_composite_state_backend_routes_and_search(tmp_path: Path):

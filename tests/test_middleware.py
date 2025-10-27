@@ -15,16 +15,24 @@ from deepagents.middleware.filesystem import (
     FILESYSTEM_SYSTEM_PROMPT,
     FileData,
     FilesystemMiddleware,
-    FilesystemState,
-    _create_file_data,
-    _update_file_data,
+    FilesystemState
 )
-from deepagents.backends import StoreBackend, CompositeBackend, build_composite_state_backend
+from deepagents.backends import StoreBackend, CompositeBackend, StateBackend
 
 from deepagents.backends.utils import create_file_data, update_file_data
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
 from deepagents.backends.utils import truncate_if_too_long
+
+def build_composite_state_backend(runtime: ToolRuntime, *, routes):
+    built_routes = {}
+    for prefix, backend_or_factory in routes.items():
+        if callable(backend_or_factory):
+            built_routes[prefix] = backend_or_factory(runtime)
+        else:
+            built_routes[prefix] = backend_or_factory
+    default_state = StateBackend(runtime)
+    return CompositeBackend(default=default_state, routes=built_routes)
 
 class TestAddMiddleware:
     def test_filesystem_middleware(self):

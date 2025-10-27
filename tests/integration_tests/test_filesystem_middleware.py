@@ -13,8 +13,19 @@ from deepagents.middleware.filesystem import (
     FileData,
     FilesystemMiddleware,
 )
-from deepagents.backends import StateBackend, StoreBackend, build_composite_state_backend
+from deepagents.backends import StateBackend, StoreBackend, CompositeBackend
 from tests.utils import ResearchMiddleware, get_la_liga_standings, get_nba_standings, get_nfl_standings, get_premier_league_standings
+
+
+def build_composite_state_backend(runtime, *, routes):
+    built_routes = {}
+    for prefix, backend_or_factory in routes.items():
+        if callable(backend_or_factory):
+            built_routes[prefix] = backend_or_factory(runtime)
+        else:
+            built_routes[prefix] = backend_or_factory
+    default_state = StateBackend(runtime)
+    return CompositeBackend(default=default_state, routes=built_routes)
 
 
 @pytest.mark.requires("langchain_anthropic")
