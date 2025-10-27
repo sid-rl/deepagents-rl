@@ -2,10 +2,8 @@
 
 from typing import Literal
 
-from langchain.tools import ToolRuntime
-
-from .typedefs import Backend, EditResult, WriteResult
-from .utils import (
+from deepagents.backends.protocol import Backend, EditResult, WriteResult
+from deepagents.backends.utils import (
     _glob_search_files,
     _grep_search_files,
     create_file_data,
@@ -169,15 +167,3 @@ class StateBackend(Backend):
         if result == "No files found":
             return []
         return truncate_if_too_long(result.split("\n"))
-
-
-def StateBackendProvider(runtime: ToolRuntime) -> Backend:
-    """Provider for StateBackend instances.
-
-    Args:
-        runtime: Tool runtime with access to LangGraph state
-
-    Returns:
-        StateBackend instance configured for this runtime
-    """
-    return StateBackend(runtime)

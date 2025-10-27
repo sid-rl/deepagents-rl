@@ -1,31 +1,172 @@
-"""Protocol definition for pluggable memory backends.
+"""Type definitions for backend interface.
 
-This module defines the BackendProtocol that all backend implementations
+This module defines the unified Backend interface that all backend implementations
 must follow. Backends can store files in different locations (state, filesystem,
 database, etc.) and provide a uniform interface for file operations.
 """
 
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
 
 from langchain.tools import ToolRuntime
-from langgraph.types import Command
 
 
-@runtime_checkable
-class _BackendProtocol(Protocol):
-    """Protocol for pluggable memory backends.
+@dataclass
+class WriteResult:
+    """Result of a file write operation (creating a new file).
 
-    Backends can store files in different locations (state, filesystem, database, etc.)
-    and provide a uniform interface for file operations.
+    This class provides a consistent return type for write operations across all
+    backends, regardless of whether they manage their own storage or rely on
+    framework-managed storage.
 
-    All file data is represented as dicts with the following structure:
+    Attributes:
+        error:
+            None on success.
+            String error message on failure.
+
+        path:
+            Absolute path of the file that was written.
+            None on failure.
+
+        content:
+            Full file content that was written.
+            May be None if the write failed, or if the backend
+            chooses not to return file contents.
+
+        files_update:
+            For checkpoint storage backends (e.g., StateBackend):
+                A {file_path: file_data} mapping representing the new canonical
+                state for those files. The tool layer is responsible for merging
+                this into LangGraph state (persisted via checkpoints).
+
+            For external storage backends (e.g., FilesystemBackend, S3Backend, StoreBackend):
+                None, because the backend has already committed the change to
+                its external storage system (disk, S3, database, BaseStore, etc.).
+
+    Examples:
+        Checkpoint storage backend (StateBackend):
+        >>> WriteResult(path="/notes.txt", content="Hello world", files_update={"/notes.txt": {"content": [...], "created_at": ...}})
+
+        External storage backend (FilesystemBackend):
+        >>> WriteResult(
+        ...     path="/notes.txt",
+        ...     content="Hello world",
+        ...     files_update=None,  # Already written to disk
+        ... )
+
+        Error case:
+        >>> WriteResult(error="File already exists")
+    """
+
+    error: str | None = None
+    path: str | None = None
+    content: str | None = None
+    files_update: dict[str, Any] | None = None
+
+
+@dataclass
+class EditResult:
+    """Result of a file edit operation (modifying an existing file).
+
+    This class provides a consistent return type for edit operations across all
+    backends, regardless of whether they manage their own storage or rely on
+    framework-managed storage.
+
+    Attributes:
+        error:
+            None on success.
+            String error message on failure.
+
+        path:
+            Absolute path of the file that was edited.
+            None on failure.
+
+        content:
+            Full file content after the edit.
+            May be None if the edit failed, or if the backend
+            chooses not to return file contents.
+
+        files_update:
+            For checkpoint storage backends (e.g., StateBackend):
+                A {file_path: file_data} mapping representing the new canonical
+                state for those files. The tool layer is responsible for merging
+                this into LangGraph state (persisted via checkpoints).
+
+            For external storage backends (e.g., FilesystemBackend, S3Backend, StoreBackend):
+                None, because the backend has already committed the change to
+                its external storage system (disk, S3, database, BaseStore, etc.).
+
+        occurrences:
+            Number of string occurrences that were replaced.
+            None on failure or if not applicable.
+
+    Examples:
+        Checkpoint storage backend (StateBackend):
+        >>> EditResult(path="/notes.txt", content="Hello world", files_update={"/notes.txt": {"content": [...], "modified_at": ...}}, occurrences=1)
+
+        External storage backend (FilesystemBackend):
+        >>> EditResult(
+        ...     path="/notes.txt",
+        ...     content="Hello world",
+        ...     files_update=None,  # Already written to disk
+        ...     occurrences=3,
+        ... )
+
+        Error case:
+        >>> EditResult(error="File not found")
+    """
+
+    error: str | None = None
+    path: str | None = None
+    content: str | None = None
+    files_update: dict[str, Any] | None = None
+    occurrences: int | None = None
+
+
+class Backend(ABC):
+    """Abstract base class for pluggable memory backends.
+
+    Backends can store files in different locations (state, filesystem,
+    database, etc.) and provide a uniform interface for file operations.
+
+    Storage Models:
+    --------------
+    There are two categories of backends based on how they handle storage:
+
+    1. Checkpoint Storage (e.g., StateBackend):
+       - Files are stored as data structures in LangGraph state
+       - Persisted via LangGraph's checkpoint system (Postgres, Redis, in-memory, etc.)
+       - write() and edit() return WriteResult/EditResult with files_update populated
+       - The tool layer converts files_update into LangGraph state updates via Command
+
+       Example: StateBackend stores files in LangGraph state, which is persisted
+       through LangGraph's checkpointing. The backend returns files_update, and
+       the tool layer wraps it in a Command object for state mutation.
+
+    2. External Storage (e.g., FilesystemBackend, S3Backend, StoreBackend, DatabaseBackend):
+       - Files are stored in external storage systems (filesystem, S3, BaseStore, database, etc.)
+       - Backend persists changes directly to external storage
+       - write() and edit() return WriteResult/EditResult with files_update=None
+       - Tool layer just reports success/error
+
+       Example: FilesystemBackend writes directly to disk, then returns a
+       WriteResult indicating success with files_update=None.
+
+    File Data Format:
+    ----------------
+    Checkpoint storage backends represent files as dicts with:
     {
         "content": list[str],      # Lines of text content
         "created_at": str,         # ISO format timestamp
         "modified_at": str,        # ISO format timestamp
     }
+
+    External storage backends handle their own file format internally.
     """
 
+    @abstractmethod
     def ls(self, path: str) -> list[str]:
         """List all file paths in a directory.
 
@@ -34,9 +175,11 @@ class _BackendProtocol(Protocol):
 
         Returns:
             List of absolute file paths in the specified directory.
+            Returns empty list if directory doesn't exist or is empty.
         """
         ...
 
+    @abstractmethod
     def read(
         self,
         file_path: str,
@@ -57,6 +200,77 @@ class _BackendProtocol(Protocol):
         """
         ...
 
+    @abstractmethod
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """Create a new file with content.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            content: File content as a string
+
+        Returns:
+            WriteResult with:
+            - On success:
+                - error=None
+                - path=file_path
+                - content=content (or None)
+                - files_update={...} for checkpoint storage backends
+                - files_update=None for external storage backends
+            - On failure:
+                - error="error message"
+                - path=None
+                - content=None
+                - files_update=None
+
+        Error cases:
+            - File already exists (should use edit instead)
+            - Permission denied
+            - Path traversal attempts
+            - I/O errors
+        """
+        ...
+
+    @abstractmethod
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        """Edit a file by replacing string occurrences.
+
+        Args:
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
+            old_string: String to find and replace
+            new_string: Replacement string
+            replace_all: If True, replace all occurrences; if False, require unique match
+
+        Returns:
+            EditResult with:
+            - On success:
+                - error=None
+                - path=file_path
+                - content=updated content (or None)
+                - files_update={...} for checkpoint storage backends
+                - files_update=None for external storage backends
+                - occurrences=number of replacements made
+            - On failure:
+                - error="error message"
+                - path=None
+                - content=None
+                - files_update=None
+                - occurrences=None
+
+        Error cases:
+            - "Error: File '{file_path}' not found" if file doesn't exist
+            - "Error: String not found in file: '{old_string}'" if string not found
+            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
+              if multiple matches found and replace_all=False
+        """
+        ...
+
+    @abstractmethod
     def grep(
         self,
         pattern: str,
@@ -75,7 +289,6 @@ class _BackendProtocol(Protocol):
         - File type filter: type parameter (e.g., "py", "js")
         - Multiline support: multiline parameter for cross-line pattern matching
         - Pattern semantics: Clarify if pattern is regex or literal string
-        See /memories/memory_backend_vs_claude_code_comparison.md for full details.
 
         Args:
             pattern: String pattern to search for (currently literal string)
@@ -91,6 +304,7 @@ class _BackendProtocol(Protocol):
         """
         ...
 
+    @abstractmethod
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.
 
@@ -100,113 +314,12 @@ class _BackendProtocol(Protocol):
 
         Returns:
             List of absolute file paths matching the pattern.
+            Returns empty list if no matches found.
         """
         ...
 
 
-class BackendProtocol(_BackendProtocol):
-    def write(
-        self,
-        file_path: str,
-        content: str,
-    ) -> str:
-        """Create a new file with content.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error if file already exists
-
-        Error cases:
-            - Returns error message if file already exists (should use edit instead)
-        """
-
-    def edit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> str:
-        """Edit a file by replacing string occurrences.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error message on failure
-
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
-        """
-
-
-@runtime_checkable
-class BackendProvider(Protocol):
-    def get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
-        """Get the backend."""
-        ...
-
-
-class StateBackendProtocol(_BackendProtocol):
-    def write(
-        self,
-        file_path: str,
-        content: str,
-    ) -> Command | str:
-        """Create a new file with content.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error if file already exists
-
-        Error cases:
-            - Returns error message if file already exists (should use edit instead)
-        """
-
-    def edit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> Command | str:
-        """Edit a file by replacing string occurrences.
-
-        Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
-
-        Returns:
-            - Command object for StateBackend (uses_state=True) to update LangGraph state
-            - Success message string for other backends, or error message on failure
-
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
-        """
-
-
-@runtime_checkable
-class StateBackendProvider(Protocol):
-    def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
-        """Get the backend."""
-        ...
+# Type alias for backend factory functions
+# A backend provider is any callable that takes a ToolRuntime and returns a Backend instance
+BackendProvider = Callable[[ToolRuntime], Backend]
+AsyncBackendProvider = Callable[[ToolRuntime], Awaitable[Backend]]

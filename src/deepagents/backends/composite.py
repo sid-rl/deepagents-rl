@@ -1,8 +1,6 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
-from langchain.tools import ToolRuntime
-
-from .typedefs import Backend, BackendProvider, EditResult, WriteResult
+from deepagents.backends.protocol import Backend, EditResult, WriteResult
 
 
 class CompositeBackend(Backend):
@@ -221,34 +219,3 @@ class CompositeBackend(Backend):
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
-
-
-def CompositeBackendProvider(
-    default_provider: BackendProvider,
-    routes: dict[str, Backend | BackendProvider],
-) -> BackendProvider:
-    """Create a provider for CompositeBackend with the given configuration.
-
-    Args:
-        default_provider: Provider for the default backend
-        routes: Dictionary mapping path prefixes to backends or backend providers
-
-    Returns:
-        A BackendProvider function that creates CompositeBackend instances
-    """
-
-    def provider(runtime: ToolRuntime) -> Backend:
-        """Create a CompositeBackend instance with the given runtime.
-
-        Args:
-            runtime: The ToolRuntime instance to pass to backend providers.
-
-        Returns:
-            Configured CompositeBackend instance.
-        """
-        return CompositeBackend(
-            default=default_provider(runtime),
-            routes={k: v if isinstance(v, Backend) else v(runtime) for k, v in routes.items()},
-        )
-
-    return provider

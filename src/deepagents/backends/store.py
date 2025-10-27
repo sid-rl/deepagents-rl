@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 from langgraph.config import get_config
 from langgraph.store.base import BaseStore, Item
 
+from deepagents.backends.protocol import Backend, EditResult, WriteResult
 from deepagents.backends.utils import (
     _glob_search_files,
     _grep_search_files,
@@ -18,8 +19,6 @@ from deepagents.backends.utils import (
     truncate_if_too_long,
     update_file_data,
 )
-
-from .typedefs import Backend, EditResult, WriteResult
 
 
 class StoreBackend(Backend):
@@ -359,15 +358,3 @@ class StoreBackend(Backend):
         if result == "No files found":
             return []
         return truncate_if_too_long(result.split("\n"))
-
-
-def StoreBackendProvider(runtime: "ToolRuntime") -> Backend:
-    """Provider for StoreBackend that creates instances with runtime.
-
-    Args:
-        runtime: The ToolRuntime instance to pass to StoreBackend.
-
-    Returns:
-        Configured StoreBackend instance.
-    """
-    return StoreBackend(runtime)

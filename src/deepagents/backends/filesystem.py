@@ -15,8 +15,14 @@ from pathlib import Path
 
 import wcmatch.glob as wcglob
 
-from .typedefs import Backend, EditResult, WriteResult
-from .utils import _format_grep_results, check_empty_content, format_content_with_line_numbers, perform_string_replacement, truncate_if_too_long
+from deepagents.backends.protocol import Backend, EditResult, WriteResult
+from deepagents.backends.utils import (
+    _format_grep_results,
+    check_empty_content,
+    format_content_with_line_numbers,
+    perform_string_replacement,
+    truncate_if_too_long,
+)
 
 
 class FilesystemBackend(Backend):
