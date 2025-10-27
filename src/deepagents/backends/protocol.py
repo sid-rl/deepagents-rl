@@ -5,9 +5,10 @@ must follow. Backends can store files in different locations (state, filesystem,
 database, etc.) and provide a uniform interface for file operations.
 """
 
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
-from langgraph.types import Command
+from typing import Protocol, runtime_checkable
+
 from langchain.tools import ToolRuntime
+from langgraph.types import Command
 
 
 @runtime_checkable
@@ -24,31 +25,31 @@ class _BackendProtocol(Protocol):
         "modified_at": str,        # ISO format timestamp
     }
     """
-    
+
     def ls(self, path: str) -> list[str]:
         """List all file paths in a directory.
-        
+
         Args:
             path: Absolute path to directory (e.g., "/", "/subdir/", "/memories/")
-        
+
         Returns:
             List of absolute file paths in the specified directory.
         """
         ...
-    
+
     def read(
-        self, 
+        self,
         file_path: str,
         offset: int = 0,
         limit: int = 2000,
     ) -> str:
         """Read file content with line numbers.
-        
+
         Args:
             file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
             offset: Line offset to start reading from (0-indexed)
             limit: Maximum number of lines to read
-        
+
         Returns:
             Formatted file content with line numbers (cat -n style), or error message.
             Returns "Error: File '{file_path}' not found" if file doesn't exist.
@@ -56,16 +57,15 @@ class _BackendProtocol(Protocol):
         """
         ...
 
-    
     def grep(
         self,
         pattern: str,
-        path: Optional[str] = None,
-        glob: Optional[str] = None,
+        path: str | None = None,
+        glob: str | None = None,
         output_mode: str = "files_with_matches",
     ) -> str:
         """Search for a pattern in files.
-        
+
         TODO: This implementation is significantly less capable than Claude Code's Grep tool.
         Missing features to add in the future:
         - Context lines: -A (after), -B (before), -C (context) parameters
@@ -76,7 +76,7 @@ class _BackendProtocol(Protocol):
         - Multiline support: multiline parameter for cross-line pattern matching
         - Pattern semantics: Clarify if pattern is regex or literal string
         See /memories/memory_backend_vs_claude_code_comparison.md for full details.
-        
+
         Args:
             pattern: String pattern to search for (currently literal string)
             path: Path to search in (default "/")
@@ -85,12 +85,12 @@ class _BackendProtocol(Protocol):
                 - files_with_matches: List file paths that contain matches
                 - content: Show matching lines with file paths and line numbers
                 - count: Show count of matches per file
-        
+
         Returns:
             Formatted search results based on output_mode, or message if no matches found.
         """
         ...
-    
+
     def glob(self, pattern: str, path: str = "/") -> list[str]:
         """Find files matching a glob pattern.
 
@@ -106,9 +106,9 @@ class _BackendProtocol(Protocol):
 
 class BackendProtocol(_BackendProtocol):
     def write(
-            self,
-            file_path: str,
-            content: str,
+        self,
+        file_path: str,
+        content: str,
     ) -> str:
         """Create a new file with content.
 
@@ -123,14 +123,13 @@ class BackendProtocol(_BackendProtocol):
         Error cases:
             - Returns error message if file already exists (should use edit instead)
         """
-        ...
 
     def edit(
-            self,
-            file_path: str,
-            old_string: str,
-            new_string: str,
-            replace_all: bool = False,
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
     ) -> str:
         """Edit a file by replacing string occurrences.
 
@@ -150,23 +149,20 @@ class BackendProtocol(_BackendProtocol):
             - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
               if multiple matches found and replace_all=False
         """
-        ...
 
 
 @runtime_checkable
 class BackendProvider(Protocol):
-
     def get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
         """Get the backend."""
         ...
 
 
 class StateBackendProtocol(_BackendProtocol):
-
     def write(
-            self,
-            file_path: str,
-            content: str,
+        self,
+        file_path: str,
+        content: str,
     ) -> Command | str:
         """Create a new file with content.
 
@@ -181,14 +177,13 @@ class StateBackendProtocol(_BackendProtocol):
         Error cases:
             - Returns error message if file already exists (should use edit instead)
         """
-        ...
 
     def edit(
-            self,
-            file_path: str,
-            old_string: str,
-            new_string: str,
-            replace_all: bool = False,
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
     ) -> Command | str:
         """Edit a file by replacing string occurrences.
 
@@ -208,11 +203,10 @@ class StateBackendProtocol(_BackendProtocol):
             - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
               if multiple matches found and replace_all=False
         """
-        ...
+
 
 @runtime_checkable
 class StateBackendProvider(Protocol):
-
     def get_backend(self, runtime: ToolRuntime) -> StateBackendProtocol:
         """Get the backend."""
         ...
