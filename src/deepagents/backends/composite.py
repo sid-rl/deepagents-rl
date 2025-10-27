@@ -8,6 +8,7 @@ from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol
 from deepagents.backends.state import StateBackend
 from langgraph.types import Command
 from deepagents.backends.utils import FileInfo, GrepMatch
+from deepagents.backends.protocol import BackendFactory
 
 
 class _CompositeBackend:
@@ -71,7 +72,6 @@ class _CompositeBackend:
         # Path doesn't match a route: query only default backend
         return self.default.ls_info(path)
 
-    # Removed legacy ls() convenience to keep lean surface
     
     def read(
         self, 
@@ -89,8 +89,7 @@ class _CompositeBackend:
         """
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.read(stripped_key, offset=offset, limit=limit)
-    
-    # Removed legacy grep() convenience to keep lean surface
+
 
     def grep_raw(
         self,
@@ -111,12 +110,14 @@ class _CompositeBackend:
         all_matches: list[GrepMatch] = []
         raw_default = self.default.grep_raw(pattern, path, glob)  # type: ignore[attr-defined]
         if isinstance(raw_default, str):
+            # This happens if error occurs
             return raw_default
         all_matches.extend(raw_default)
 
         for route_prefix, backend in self.routes.items():
             raw = backend.grep_raw(pattern, "/", glob)
             if isinstance(raw, str):
+                # This happens if error occurs
                 return raw
             all_matches.extend({**m, "path": f"{route_prefix[:-1]}{m['path']}"} for m in raw)
 
@@ -154,11 +155,7 @@ class CompositeStateBacked(_CompositeBackend):
             default: StateBackend,
             routes: dict[str, BackendProtocol],
     ) -> None:
-        self.default = default
-        self.routes = routes
-
-        # Sort routes by length (longest first) for correct prefix matching
-        self.sorted_routes = sorted(routes.items(), key=lambda x: len(x[0]), reverse=True)
+        super.__init__(default=default, routes=routes)
 
     def write(
             self,
@@ -230,19 +227,18 @@ class CompositeBackend(_CompositeBackend):
         backend, stripped_key = self._get_backend_and_key(file_path)
         return backend.edit(stripped_key, old_string, new_string, replace_all=replace_all)
 
-# Provider removed. Use a simple factory function instead.
+
 def build_composite_state_backend(
     runtime: ToolRuntime,
     *,
     routes: dict[str, BackendProtocol | "BackendFactory"],
 ) -> StateBackendProtocol:
-    from deepagents.backends.protocol import BackendFactory
     built_routes: dict[str, BackendProtocol] = {}
     for k, v in routes.items():
         if isinstance(v, BackendProtocol):
             built_routes[k] = v
         else:
-            built_routes[k] = v(runtime)  # type: ignore[misc]
+            built_routes[k] = v(runtime)
 
     default_state = StateBackend(runtime)
     return CompositeStateBacked(default=default_state, routes=built_routes)

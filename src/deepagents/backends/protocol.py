@@ -8,10 +8,7 @@ database, etc.) and provide a uniform interface for file operations.
 from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable, Callable, TypeAlias
 from langgraph.types import Command
 from langchain.tools import ToolRuntime
-
-if TYPE_CHECKING:
-    # TypedDicts for structured returns
-    from deepagents.backends.utils import FileInfo, GrepMatch
+from deepagents.backends.utils import FileInfo, GrepMatch
 
 @runtime_checkable
 class _BackendProtocol(Protocol):
@@ -191,4 +188,4 @@ class StateBackendProtocol(_BackendProtocol):
         """
         ...
 
-# Provider protocols removed. Prefer BackendFactory callables instead.
+StateBackendFactory: TypeAlias = Callable[[ToolRuntime], StateBackendProtocol]

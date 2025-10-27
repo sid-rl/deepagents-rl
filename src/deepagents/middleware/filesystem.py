@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command
 from typing_extensions import TypedDict
 
-from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol
+from deepagents.backends.protocol import BackendProtocol, StateBackendProtocol, StateBackendFactory, BackendFactory
 from deepagents.backends import StateBackend, CompositeBackend
 from deepagents.backends.utils import (
     create_file_data,
@@ -38,7 +38,8 @@ DEFAULT_READ_LIMIT = 2000
 BACKEND_TYPES = (
     BackendProtocol
     | StateBackendProtocol
-    | Callable[[ToolRuntime], BackendProtocol | StateBackendProtocol]
+    | BackendFactory
+    | StateBackendFactory
 )
 
 
