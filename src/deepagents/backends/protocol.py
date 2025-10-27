@@ -70,44 +70,23 @@ class EditResult:
 
 
 class Backend(ABC):
-    """Abstract base class for pluggable memory backends.
+    """Abstract interface for pluggable file storage backends.
 
-    Backends can store files in different locations (state, filesystem,
-    database, etc.) and provide a uniform interface for file operations.
+    Backends store files in different locations (LangGraph state, filesystem, database, etc.)
+    and provide a uniform interface for file operations.
 
     Storage Models:
-    --------------
-    There are two categories of backends based on how they handle storage:
+        Checkpoint Storage (StateBackend): Files stored in LangGraph state, persisted via
+            checkpointing. Returns WriteResult/EditResult with files_update populated for
+            tool layer to convert to Command objects.
 
-    1. Checkpoint Storage (e.g., StateBackend):
-       - Files are stored as data structures in LangGraph state
-       - Persisted via LangGraph's checkpoint system (Postgres, Redis, in-memory, etc.)
-       - write() and edit() return WriteResult/EditResult with files_update populated
-       - The tool layer converts files_update into LangGraph state updates via Command
-
-       Example: StateBackend stores files in LangGraph state, which is persisted
-       through LangGraph's checkpointing. The backend returns files_update, and
-       the tool layer wraps it in a Command object for state mutation.
-
-    2. External Storage (e.g., FilesystemBackend, S3Backend, StoreBackend, DatabaseBackend):
-       - Files are stored in external storage systems (filesystem, S3, BaseStore, database, etc.)
-       - Backend persists changes directly to external storage
-       - write() and edit() return WriteResult/EditResult with files_update=None
-       - Tool layer just reports success/error
-
-       Example: FilesystemBackend writes directly to disk, then returns a
-       WriteResult indicating success with files_update=None.
+        External Storage (FilesystemBackend, StoreBackend, etc.): Files persisted directly
+            to external systems (disk, S3, BaseStore, database). Returns WriteResult/EditResult
+            with files_update=None.
 
     File Data Format:
-    ----------------
-    Checkpoint storage backends represent files as dicts with:
-    {
-        "content": list[str],      # Lines of text content
-        "created_at": str,         # ISO format timestamp
-        "modified_at": str,        # ISO format timestamp
-    }
-
-    External storage backends handle their own file format internally.
+        Checkpoint backends use dicts: {"content": list[str], "created_at": str, "modified_at": str}.
+        External backends manage their own format internally.
     """
 
     @abstractmethod
@@ -115,11 +94,10 @@ class Backend(ABC):
         """List all file paths in a directory.
 
         Args:
-            path: Absolute path to directory (e.g., "/", "/subdir/", "/memories/")
+            path: Absolute directory path (e.g., "/", "/subdir/", "/memories/").
 
         Returns:
-            List of absolute file paths in the specified directory.
-            Returns empty list if directory doesn't exist or is empty.
+            List of absolute file paths. Empty list if directory doesn't exist or is empty.
         """
         ...
 
@@ -133,14 +111,12 @@ class Backend(ABC):
         """Read file content with line numbers.
 
         Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            offset: Line offset to start reading from (0-indexed)
-            limit: Maximum number of lines to read
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md").
+            offset: Line offset to start reading from (0-indexed).
+            limit: Maximum number of lines to read.
 
         Returns:
-            Formatted file content with line numbers (cat -n style), or error message.
-            Returns "Error: File '{file_path}' not found" if file doesn't exist.
-            Returns "System reminder: File exists but has empty contents" for empty files.
+            Formatted content with line numbers (cat -n style), or error message if file not found.
         """
         ...
 
@@ -149,28 +125,13 @@ class Backend(ABC):
         """Create a new file with content.
 
         Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            content: File content as a string
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md").
+            content: File content as a string.
 
         Returns:
-            WriteResult with:
-            - On success:
-                - error=None
-                - path=file_path
-                - content=content (or None)
-                - files_update={...} for checkpoint storage backends
-                - files_update=None for external storage backends
-            - On failure:
-                - error="error message"
-                - path=None
-                - content=None
-                - files_update=None
-
-        Error cases:
-            - File already exists (should use edit instead)
-            - Permission denied
-            - Path traversal attempts
-            - I/O errors
+            WriteResult with error=None on success (files_update populated for checkpoint
+            backends, None for external). Returns error message if file exists, permission
+            denied, path traversal attempt, or I/O error.
         """
         ...
 
@@ -185,32 +146,15 @@ class Backend(ABC):
         """Edit a file by replacing string occurrences.
 
         Args:
-            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md")
-            old_string: String to find and replace
-            new_string: Replacement string
-            replace_all: If True, replace all occurrences; if False, require unique match
+            file_path: Absolute file path (e.g., "/notes.txt", "/memories/agent.md").
+            old_string: String to find and replace.
+            new_string: Replacement string.
+            replace_all: If True, replace all occurrences; if False, require unique match.
 
         Returns:
-            EditResult with:
-            - On success:
-                - error=None
-                - path=file_path
-                - content=updated content (or None)
-                - files_update={...} for checkpoint storage backends
-                - files_update=None for external storage backends
-                - occurrences=number of replacements made
-            - On failure:
-                - error="error message"
-                - path=None
-                - content=None
-                - files_update=None
-                - occurrences=None
-
-        Error cases:
-            - "Error: File '{file_path}' not found" if file doesn't exist
-            - "Error: String not found in file: '{old_string}'" if string not found
-            - "Error: String '{old_string}' appears {n} times. Use replace_all=True..."
-              if multiple matches found and replace_all=False
+            EditResult with error=None on success (files_update populated for checkpoint
+            backends, None for external). Returns error if file not found, string not found,
+            or multiple matches without replace_all=True.
         """
         ...
 
@@ -224,27 +168,20 @@ class Backend(ABC):
     ) -> str:
         """Search for a pattern in files.
 
-        TODO: This implementation is significantly less capable than Claude Code's Grep tool.
-        Missing features to add in the future:
-        - Context lines: -A (after), -B (before), -C (context) parameters
-        - Line numbers: -n parameter to show line numbers in output
-        - Case sensitivity: -i parameter for case-insensitive search
-        - Output limiting: head_limit parameter for large result sets
-        - File type filter: type parameter (e.g., "py", "js")
-        - Multiline support: multiline parameter for cross-line pattern matching
-        - Pattern semantics: Clarify if pattern is regex or literal string
-
         Args:
-            pattern: String pattern to search for (currently literal string)
-            path: Path to search in (default "/")
-            glob: Optional glob pattern to filter files (e.g., "*.py")
-            output_mode: Output format - "files_with_matches", "content", or "count"
-                - files_with_matches: List file paths that contain matches
-                - content: Show matching lines with file paths and line numbers
-                - count: Show count of matches per file
+            pattern: Search pattern (implementation-specific: literal or regex).
+            path: Directory to search in (default "/").
+            glob: Optional glob pattern to filter files (e.g., "*.py").
+            output_mode: Output format - "files_with_matches" (file paths), "content"
+                (matching lines with context), or "count" (match counts per file).
 
         Returns:
             Formatted search results based on output_mode, or message if no matches found.
+
+        Note:
+            This is a basic implementation. Missing features: context lines (-A/-B/-C),
+            line numbers (-n), case sensitivity (-i), output limiting, file type filters,
+            multiline support.
         """
         ...
 
@@ -253,18 +190,15 @@ class Backend(ABC):
         """Find files matching a glob pattern.
 
         Args:
-            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md")
-            path: Base path to search from (default: "/")
+            pattern: Glob pattern (e.g., "**/*.py", "*.txt", "/subdir/**/*.md").
+            path: Base directory to search from (default "/").
 
         Returns:
-            List of absolute file paths matching the pattern.
-            Returns empty list if no matches found.
+            List of absolute file paths matching pattern. Empty list if no matches.
         """
         ...
 
 
-# Type alias for backend factory functions
-# A backend provider is any callable that takes a ToolRuntime and returns a Backend instance
+# Backend factory function types
 BackendProvider = Callable[[ToolRuntime], Backend]
-# We'll need to support an async variant as well.
 AsyncBackendProvider = Callable[[ToolRuntime], Awaitable[Backend]]
