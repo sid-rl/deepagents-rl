@@ -13,16 +13,12 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from langchain.tools import ToolRuntime
+from typing import Optional
 
 from .utils import (
     check_empty_content,
     format_content_with_line_numbers,
     perform_string_replacement,
-    truncate_if_too_long,
 )
 import wcmatch.glob as wcglob
 from deepagents.backends.utils import FileInfo, GrepMatch
@@ -51,10 +47,7 @@ class FilesystemBackend:
                      all file paths will be resolved relative to this directory.
                      If not provided, uses the current working directory.
         """
-        if root_dir and not root_dir.startswith("/"):
-            # If root_dir is a relative path, resolve it to an absolute path
-            root_dir = Path(root_dir).resolve()
-        self.cwd = Path(root_dir) if root_dir else Path.cwd()
+        self.cwd = Path(root_dir).resolve() if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
 
