@@ -47,7 +47,7 @@ def test_composite_state_backend_routes_and_search(tmp_path: Path):
     # ls_info at root returns both
     infos = be.ls_info("/")
     paths = {i["path"] for i in infos}
-    assert "/file.txt" in paths and "/memories/readme.md" in paths
+    assert "/file.txt" in paths and "/memories/" in paths
 
     # grep across both
     matches = be.grep_raw("alpha", path="/")
@@ -120,7 +120,7 @@ def test_composite_backend_store_to_store():
     infos = comp.ls_info("/")
     paths = {i["path"] for i in infos}
     assert "/notes.txt" in paths
-    assert "/memories/important.txt" in paths
+    assert "/memories/" in paths
 
     # grep across both stores
     matches = comp.grep_raw("default", path="/")
@@ -168,9 +168,9 @@ def test_composite_backend_multiple_routes():
     infos = comp.ls_info("/")
     paths = {i["path"] for i in infos}
     assert "/temp.txt" in paths
-    assert "/memories/important.md" in paths
-    assert "/archive/old.log" in paths
-    assert "/cache/session.json" in paths
+    assert "/memories/" in paths
+    assert "/archive/" in paths
+    assert "/cache/" in paths
 
     # ls_info at specific route
     mem_infos = comp.ls_info("/memories/")

@@ -19,10 +19,11 @@ def test_filesystem_backend_normal_mode(tmp_path: Path):
 
     be = FilesystemBackend(root_dir=str(root), virtual_mode=False)
 
-    # ls_info absolute path
+    # ls_info absolute path - should only list files in root, not subdirectories
     infos = be.ls_info(str(root))
     paths = {i["path"] for i in infos}
-    assert str(f1) in paths and str(f2) in paths
+    assert str(f1) in paths  # File in root should be listed
+    assert str(f2) not in paths  # File in subdirectory should NOT be listed
 
     # read, edit, write
     txt = be.read(str(f1))
@@ -50,10 +51,11 @@ def test_filesystem_backend_virtual_mode(tmp_path: Path):
 
     be = FilesystemBackend(root_dir=str(root), virtual_mode=True)
 
-    # ls_info from virtual root
+    # ls_info from virtual root - should only list files in root, not subdirectories
     infos = be.ls_info("/")
     paths = {i["path"] for i in infos}
-    assert "/a.txt" in paths and "/dir/b.md" in paths
+    assert "/a.txt" in paths  # File in root should be listed
+    assert "/dir/b.md" not in paths  # File in subdirectory should NOT be listed
 
     # read and edit via virtual path
     txt = be.read("/a.txt")

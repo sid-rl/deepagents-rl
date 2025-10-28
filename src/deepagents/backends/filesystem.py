@@ -51,6 +51,9 @@ class FilesystemBackend:
                      all file paths will be resolved relative to this directory.
                      If not provided, uses the current working directory.
         """
+        if root_dir and not root_dir.startswith("/"):
+            raise ValueError("Root directory must be an absolute path")
+
         self.cwd = Path(root_dir) if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
@@ -77,7 +80,7 @@ class FilesystemBackend:
             try:
                 full.relative_to(self.cwd)
             except ValueError:
-                raise ValueError(f"Path outside root directory: {key}") from None
+                raise ValueError(f"Path:{full} outside root directory: {self.cwd}") from None
             return full
 
         path = Path(key)
@@ -86,13 +89,14 @@ class FilesystemBackend:
         return (self.cwd / path).resolve()
 
     def ls_info(self, path: str) -> list[FileInfo]:
-        """List files from filesystem.
+        """List files and directories in the specified directory (non-recursive).
 
         Args:
             path: Absolute directory path to list files from.
-        
+
         Returns:
-            List of FileInfo-like dicts.
+            List of FileInfo-like dicts for files and directories directly in the directory.
+            Directories have a trailing / in their path and is_dir=True.
         """
         dir_path = self._resolve_path(path)
         if not dir_path.exists() or not dir_path.is_dir():
@@ -105,18 +109,22 @@ class FilesystemBackend:
         if not cwd_str.endswith("/"):
             cwd_str += "/"
 
-        # Walk the directory tree
+        # List only direct children (non-recursive)
         try:
-            for path in dir_path.rglob("*"):
+            for child_path in dir_path.iterdir():
                 try:
-                    is_file = path.is_file()
+                    is_file = child_path.is_file()
+                    is_dir = child_path.is_dir()
                 except OSError:
                     continue
-                if is_file:
-                    abs_path = str(path)
-                    if not self.virtual_mode:
+
+                abs_path = str(child_path)
+
+                if not self.virtual_mode:
+                    # Non-virtual mode: use absolute paths
+                    if is_file:
                         try:
-                            st = path.stat()
+                            st = child_path.stat()
                             results.append({
                                 "path": abs_path,
                                 "is_dir": False,
@@ -125,8 +133,19 @@ class FilesystemBackend:
                             })
                         except OSError:
                             results.append({"path": abs_path, "is_dir": False})
-                        continue
-                    # Strip the cwd prefix if present
+                    elif is_dir:
+                        try:
+                            st = child_path.stat()
+                            results.append({
+                                "path": abs_path + "/",
+                                "is_dir": True,
+                                "size": 0,
+                                "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                            })
+                        except OSError:
+                            results.append({"path": abs_path + "/", "is_dir": True})
+                else:
+                    # Virtual mode: strip cwd prefix
                     if abs_path.startswith(cwd_str):
                         relative_path = abs_path[len(cwd_str):]
                     elif abs_path.startswith(str(self.cwd)):
@@ -137,16 +156,29 @@ class FilesystemBackend:
                         relative_path = abs_path
 
                     virt_path = "/" + relative_path
-                    try:
-                        st = path.stat()
-                        results.append({
-                            "path": virt_path,
-                            "is_dir": False,
-                            "size": int(st.st_size),
-                            "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
-                        })
-                    except OSError:
-                        results.append({"path": virt_path, "is_dir": False})
+
+                    if is_file:
+                        try:
+                            st = child_path.stat()
+                            results.append({
+                                "path": virt_path,
+                                "is_dir": False,
+                                "size": int(st.st_size),
+                                "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                            })
+                        except OSError:
+                            results.append({"path": virt_path, "is_dir": False})
+                    elif is_dir:
+                        try:
+                            st = child_path.stat()
+                            results.append({
+                                "path": virt_path + "/",
+                                "is_dir": True,
+                                "size": 0,
+                                "modified_at": datetime.fromtimestamp(st.st_mtime).isoformat(),
+                            })
+                        except OSError:
+                            results.append({"path": virt_path + "/", "is_dir": True})
         except (OSError, PermissionError):
             pass
 
@@ -171,6 +203,8 @@ class FilesystemBackend:
             Formatted file content with line numbers, or error message.
         """
         resolved_path = self._resolve_path(file_path)
+
+        print(f"Resolved path: {resolved_path}")
         
         if not resolved_path.exists() or not resolved_path.is_file():
             return f"Error: File '{file_path}' not found"
