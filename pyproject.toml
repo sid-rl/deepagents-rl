@@ -9,8 +9,15 @@ dependencies = [
     "langchain-anthropic>=1.0.0,<2.0.0",
     "langchain>=1.0.0,<2.0.0",
     "langchain-core>=1.0.0,<2.0.0",
-    "wcmatch"
+    "wcmatch",
+            "tavily-python",
+    "python-dotenv",
+    "requests",
+    "rich>=13.0.0",
 ]
+
+[project.scripts]
+deepagents = "deepagents.cli:cli_main"
 
 [project.optional-dependencies]
 dev = [
@@ -43,6 +50,7 @@ include = ["deepagents*"]
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
+"deepagents" = ["*.md"]
 
 [tool.ruff]
 line-length = 150
