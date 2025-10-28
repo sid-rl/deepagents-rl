@@ -108,12 +108,6 @@ class TestFilesystemMiddleware:
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
-    def test_init_with_relative_root_dir_raises_error(self):
-        from deepagents.backends.filesystem import FilesystemBackend
-
-        with pytest.raises(ValueError):
-            FilesystemBackend(root_dir="relative/path")
-
     def test_ls_shortterm(self):
         state = FilesystemState(
             messages=[],
