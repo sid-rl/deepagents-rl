@@ -203,8 +203,6 @@ class FilesystemBackend:
             Formatted file content with line numbers, or error message.
         """
         resolved_path = self._resolve_path(file_path)
-
-        print(f"Resolved path: {resolved_path}")
         
         if not resolved_path.exists() or not resolved_path.is_file():
             return f"Error: File '{file_path}' not found"

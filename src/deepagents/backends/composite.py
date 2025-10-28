@@ -1,13 +1,10 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
-from typing import Any, Literal, Optional, TYPE_CHECKING
+from typing import Optional
 
-from langchain.tools import ToolRuntime
-
-from deepagents.backends.protocol import BackendProtocol, BackendFactory, WriteResult, EditResult
+from deepagents.backends.protocol import BackendProtocol, WriteResult, EditResult
 from deepagents.backends.state import StateBackend
 from deepagents.backends.utils import FileInfo, GrepMatch
-from deepagents.backends.protocol import BackendFactory
 
 
 class CompositeBackend:
@@ -75,8 +72,6 @@ class CompositeBackend:
         if path == "/":
             results: list[FileInfo] = []
             results.extend(self.default.ls_info(path))
-
-            # Add virtual directories for each route
             for route_prefix, backend in self.sorted_routes:
                 # Add the route itself as a directory (e.g., /memories/)
                 results.append({
