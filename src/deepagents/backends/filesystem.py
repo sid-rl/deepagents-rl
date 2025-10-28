@@ -52,8 +52,8 @@ class FilesystemBackend:
                      If not provided, uses the current working directory.
         """
         if root_dir and not root_dir.startswith("/"):
-            raise ValueError("Root directory must be an absolute path")
-
+            # If root_dir is a relative path, resolve it to an absolute path
+            root_dir = Path(root_dir).resolve()
         self.cwd = Path(root_dir) if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
