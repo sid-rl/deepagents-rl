@@ -24,6 +24,7 @@ def test_filesystem_backend_normal_mode(tmp_path: Path):
     paths = {i["path"] for i in infos}
     assert str(f1) in paths  # File in root should be listed
     assert str(f2) not in paths  # File in subdirectory should NOT be listed
+    assert (str(root) + "/dir/") in paths  # Directory should be listed
 
     # read, edit, write
     txt = be.read(str(f1))
@@ -56,6 +57,7 @@ def test_filesystem_backend_virtual_mode(tmp_path: Path):
     paths = {i["path"] for i in infos}
     assert "/a.txt" in paths  # File in root should be listed
     assert "/dir/b.md" not in paths  # File in subdirectory should NOT be listed
+    assert "/dir/" in paths  # Directory should be listed
 
     # read and edit via virtual path
     txt = be.read("/a.txt")
