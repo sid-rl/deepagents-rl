@@ -26,7 +26,7 @@ lint = [
     "ruff>=0.12.2,<0.13.0",
 ]
 typing = [
-    "mypy>=1.18.1,<1.19.0",
+    "ty",
 ]
 
 [build-system]
@@ -97,10 +97,3 @@ ignore-var-parameters = true
     "ANN",     # Skip type annotations in examples
 ]
 
-[tool.mypy]
-strict = true
-ignore_missing_imports = true
-enable_error_code = ["deprecated"]
-# Optional: reduce strictness if needed
-disallow_any_generics = false
-warn_return_any = false

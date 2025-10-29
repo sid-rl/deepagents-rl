@@ -1,7 +1,7 @@
 import os
 from typing import Literal
 
-from tavily import TavilyClient
+from tavily import TavilyClient  # type: ignore[import-untyped]
 
 from deepagents import create_deep_agent
 

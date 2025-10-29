@@ -1,5 +1,6 @@
 """CompositeBackend: Route operations to different backends based on path prefix."""
 
+from typing import cast
 
 from deepagents.backends.protocol import BackendProtocol, EditResult, WriteResult
 from deepagents.backends.state import StateBackend
@@ -7,11 +8,19 @@ from deepagents.backends.utils import FileInfo, GrepMatch
 
 
 class CompositeBackend:
+    """Composite backend that routes operations to different backends based on path prefix."""
+
     def __init__(
         self,
         default: BackendProtocol | StateBackend,
-        routes: dict[str, BackendProtocol],
+        routes: dict[str, BackendProtocol | StateBackend],
     ) -> None:
+        """Initialize the composite backend.
+
+        Args:
+            default: Default backend for non-routed paths
+            routes: Dictionary mapping path prefixes to backends
+        """
         # Default backend
         self.default = default
 
@@ -38,9 +47,9 @@ class CompositeBackend:
                 # e.g., "/memories/notes.txt" → "/notes.txt"; "/memories/" → "/"
                 suffix = key[len(prefix) :]
                 stripped_key = f"/{suffix}" if suffix else "/"
-                return backend, stripped_key
+                return cast("BackendProtocol", backend), stripped_key
 
-        return self.default, key
+        return cast("BackendProtocol", self.default), key
 
     def ls_info(self, path: str) -> list[FileInfo]:
         """List files and directories in the specified directory (non-recursive).
@@ -61,16 +70,16 @@ class CompositeBackend:
                 infos = backend.ls_info(search_path)
                 prefixed: list[FileInfo] = []
                 for fi in infos:
-                    fi = dict(fi)
-                    fi["path"] = f"{route_prefix[:-1]}{fi['path']}"
-                    prefixed.append(fi)
+                    fi_dict = dict(fi)
+                    fi_dict["path"] = f"{route_prefix[:-1]}{fi_dict['path']}"
+                    prefixed.append(fi_dict)
                 return prefixed
 
         # At root, aggregate default and all routed backends
         if path == "/":
             results: list[FileInfo] = []
             results.extend(self.default.ls_info(path))
-            for route_prefix, backend in self.sorted_routes:
+            for route_prefix, _backend in self.sorted_routes:
                 # Add the route itself as a directory (e.g., /memories/)
                 results.append(
                     {
@@ -110,6 +119,16 @@ class CompositeBackend:
         path: str | None = None,
         glob: str | None = None,
     ) -> list[GrepMatch] | str:
+        """Search for pattern in files, routing to appropriate backend(s).
+
+        Args:
+            pattern: Regular expression pattern to search for
+            path: Optional path to search within
+            glob: Optional glob pattern to filter files
+
+        Returns:
+            List of grep matches or error message string
+        """
         # If path targets a specific route, search only that backend
         for route_prefix, backend in self.sorted_routes:
             if path is not None and path.startswith(route_prefix.rstrip("/")):
@@ -137,6 +156,15 @@ class CompositeBackend:
         return all_matches
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Find files matching glob pattern, routing to appropriate backend(s).
+
+        Args:
+            pattern: Glob pattern to match files
+            path: Starting path for the search
+
+        Returns:
+            List of FileInfo dicts for matching files
+        """
         results: list[FileInfo] = []
 
         # Route based on path, not pattern
@@ -180,7 +208,8 @@ class CompositeBackend:
                     files = state.get("files", {})
                     files.update(res.files_update)
                     state["files"] = files
-            except Exception:
+            except (AttributeError, KeyError, TypeError):
+                # Silently skip state update if runtime or state unavailable
                 pass
         return res
 
@@ -210,6 +239,7 @@ class CompositeBackend:
                     files = state.get("files", {})
                     files.update(res.files_update)
                     state["files"] = files
-            except Exception:
+            except (AttributeError, KeyError, TypeError):
+                # Silently skip state update if runtime or state unavailable
                 pass
         return res

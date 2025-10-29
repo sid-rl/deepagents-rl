@@ -1,7 +1,5 @@
 """StateBackend: Store files in LangGraph agent state (ephemeral)."""
 
-
-
 from typing import TYPE_CHECKING
 
 from deepagents.backends.protocol import EditResult, WriteResult
@@ -37,6 +35,7 @@ class StateBackend:
         """Initialize StateBackend with runtime.
 
         Args:
+            runtime: The runtime instance to use for state management
         """
         self.runtime = runtime
 
@@ -84,15 +83,15 @@ class StateBackend:
             )
 
         # Add directories to the results
-        for subdir in sorted(subdirs):
-            infos.append(
-                {
-                    "path": subdir,
-                    "is_dir": True,
-                    "size": 0,
-                    "modified_at": "",
-                }
-            )
+        infos.extend(
+            {
+                "path": subdir,
+                "is_dir": True,
+                "size": 0,
+                "modified_at": "",
+            }
+            for subdir in sorted(subdirs)
+        )
 
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
@@ -127,6 +126,7 @@ class StateBackend:
         content: str,
     ) -> WriteResult:
         """Create a new file with content.
+
         Returns WriteResult with files_update to update LangGraph state.
         """
         files = self.runtime.state.get("files", {})
@@ -145,6 +145,7 @@ class StateBackend:
         replace_all: bool = False,
     ) -> EditResult:
         """Edit a file by replacing string occurrences.
+
         Returns EditResult with files_update and occurrences.
         """
         files = self.runtime.state.get("files", {})
@@ -171,10 +172,29 @@ class StateBackend:
         path: str = "/",
         glob: str | None = None,
     ) -> list[GrepMatch] | str:
+        """Search for pattern in files.
+
+        Args:
+            pattern: Regular expression pattern to search for
+            path: Starting path for the search
+            glob: Optional glob pattern to filter files
+
+        Returns:
+            List of grep matches or error message string
+        """
         files = self.runtime.state.get("files", {})
         return grep_matches_from_files(files, pattern, path, glob)
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Find files matching glob pattern.
+
+        Args:
+            pattern: Glob pattern to match files
+            path: Starting path for the search
+
+        Returns:
+            List of FileInfo dicts for matching files
+        """
         files = self.runtime.state.get("files", {})
         result = _glob_search_files(files, pattern, path)
         if result == "No files found":

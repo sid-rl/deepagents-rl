@@ -1,4 +1,4 @@
-import pytest
+import pytest  # type: ignore[import-untyped]
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
@@ -54,7 +54,7 @@ class TestSubagentMiddleware:
                 )
             ],
         )
-        assert "task" in agent.nodes["tools"].bound._tools_by_name
+        assert "task" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
         response = agent.invoke({"messages": [HumanMessage(content="What is the weather in Tokyo?")]})
         assert response["messages"][1].tool_calls[0]["name"] == "task"
         assert response["messages"][1].tool_calls[0]["args"]["subagent_type"] == "general-purpose"
@@ -78,7 +78,7 @@ class TestSubagentMiddleware:
                 )
             ],
         )
-        assert "task" in agent.nodes["tools"].bound._tools_by_name
+        assert "task" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
         response = agent.invoke({"messages": [HumanMessage(content="What is the weather in Tokyo?")]})
         assert response["messages"][1].tool_calls[0]["name"] == "task"
         assert response["messages"][1].tool_calls[0]["args"]["subagent_type"] == "weather"

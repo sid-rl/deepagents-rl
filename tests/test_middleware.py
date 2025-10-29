@@ -1,4 +1,4 @@
-import pytest
+import pytest  # type: ignore[import-untyped]
 from langchain.agents import create_agent
 from langchain.tools import ToolRuntime
 from langchain_core.messages import (
@@ -33,8 +33,8 @@ class TestAddMiddleware:
     def test_filesystem_middleware(self) -> None:
         middleware = [FilesystemMiddleware()]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
-        assert "files" in agent.stream_channels
-        agent_tools = agent.nodes["tools"].bound._tools_by_name.keys()
+        assert "files" in agent.stream_channels  # type: ignore[operator]
+        agent_tools = agent.nodes["tools"].bound._tools_by_name.keys()  # type: ignore[union-attr]
         assert "ls" in agent_tools
         assert "read_file" in agent_tools
         assert "write_file" in agent_tools
@@ -45,13 +45,13 @@ class TestAddMiddleware:
     def test_subagent_middleware(self) -> None:
         middleware = [SubAgentMiddleware(default_tools=[], subagents=[], default_model="claude-sonnet-4-20250514")]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
-        assert "task" in agent.nodes["tools"].bound._tools_by_name
+        assert "task" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
 
     def test_multiple_middleware(self) -> None:
         middleware = [FilesystemMiddleware(), SubAgentMiddleware(default_tools=[], subagents=[], default_model="claude-sonnet-4-20250514")]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
-        assert "files" in agent.stream_channels
-        agent_tools = agent.nodes["tools"].bound._tools_by_name.keys()
+        assert "files" in agent.stream_channels  # type: ignore[operator]
+        agent_tools = agent.nodes["tools"].bound._tools_by_name.keys()  # type: ignore[union-attr]
         assert "ls" in agent_tools
         assert "read_file" in agent_tools
         assert "write_file" in agent_tools
@@ -71,6 +71,7 @@ class TestFilesystemMiddleware:
     def test_init_with_composite_backend(self) -> None:
         def backend_factory(rt):
             return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+
         middleware = FilesystemMiddleware(backend=backend_factory)
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
@@ -85,6 +86,7 @@ class TestFilesystemMiddleware:
     def test_init_custom_system_prompt_with_composite(self) -> None:
         def backend_factory(rt):
             return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+
         middleware = FilesystemMiddleware(backend=backend_factory, system_prompt="Custom system prompt")
         assert callable(middleware.backend)
         assert middleware.system_prompt == "Custom system prompt"
@@ -100,6 +102,7 @@ class TestFilesystemMiddleware:
     def test_init_custom_tool_descriptions_with_composite(self) -> None:
         def backend_factory(rt):
             return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+
         middleware = FilesystemMiddleware(backend=backend_factory, custom_tool_descriptions={"ls": "Custom ls tool description"})
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
@@ -585,7 +588,7 @@ class TestFilesystemMiddleware:
     def test_search_store_paginated_empty(self) -> None:
         """Test pagination with no items."""
         store = InMemoryStore()
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",))
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",))  # type: ignore[arg-type]
         assert result == []
 
     def test_search_store_paginated_less_than_page_size(self) -> None:
@@ -602,7 +605,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)  # type: ignore[arg-type]
         assert len(result) == 5
         # Check that all files are present (order may vary)
         keys = {item.key for item in result}
@@ -622,7 +625,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=10)  # type: ignore[arg-type]
         assert len(result) == 10
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(10)}
@@ -641,7 +644,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=100)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=100)  # type: ignore[arg-type]
         assert len(result) == 250
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(250)}
@@ -662,7 +665,7 @@ class TestFilesystemMiddleware:
             )
 
         # Filter for type="test" (every other item, so 10 items)
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), filter={"type": "test"}, page_size=5)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), filter_dict={"type": "test"}, page_size=5)  # type: ignore[arg-type]
         assert len(result) == 10
         # Verify all returned items have type="test"
         for item in result:
@@ -683,7 +686,7 @@ class TestFilesystemMiddleware:
                 },
             )
 
-        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=20)
+        result = StoreBackend._search_store_paginated(self, store, ("filesystem",), page_size=20)  # type: ignore[arg-type]
         # Should make 3 calls: 20, 20, 15
         assert len(result) == 55
         keys = {item.key for item in result}
@@ -765,7 +768,7 @@ class TestPatchToolCallsMiddleware:
             HumanMessage(content="Hello, how are you?", id="2"),
         ]
         middleware = PatchToolCallsMiddleware()
-        state_update = middleware.before_agent({"messages": input_messages}, None)
+        state_update = middleware.before_agent({"messages": input_messages}, None)  # type: ignore[arg-type]
         assert state_update is not None
         assert len(state_update["messages"]) == 3
         assert state_update["messages"][0].type == "remove"
@@ -787,7 +790,7 @@ class TestPatchToolCallsMiddleware:
             HumanMessage(content="What is the weather in Tokyo?", id="4"),
         ]
         middleware = PatchToolCallsMiddleware()
-        state_update = middleware.before_agent({"messages": input_messages}, None)
+        state_update = middleware.before_agent({"messages": input_messages}, None)  # type: ignore[arg-type]
         assert state_update is not None
         assert len(state_update["messages"]) == 6
         assert state_update["messages"][0].type == "remove"
@@ -821,7 +824,7 @@ class TestPatchToolCallsMiddleware:
             HumanMessage(content="What is the weather in Tokyo?", id="5"),
         ]
         middleware = PatchToolCallsMiddleware()
-        state_update = middleware.before_agent({"messages": input_messages}, None)
+        state_update = middleware.before_agent({"messages": input_messages}, None)  # type: ignore[arg-type]
         assert state_update is not None
         assert len(state_update["messages"]) == 6
         assert state_update["messages"][0].type == "remove"
@@ -848,7 +851,7 @@ class TestPatchToolCallsMiddleware:
             HumanMessage(content="What is the weather in Tokyo?", id="6"),
         ]
         middleware = PatchToolCallsMiddleware()
-        state_update = middleware.before_agent({"messages": input_messages}, None)
+        state_update = middleware.before_agent({"messages": input_messages}, None)  # type: ignore[arg-type]
         assert state_update is not None
         assert len(state_update["messages"]) == 9
         assert state_update["messages"][0].type == "remove"

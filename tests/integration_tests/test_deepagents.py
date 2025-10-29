@@ -27,18 +27,18 @@ class TestDeepAgents:
     def test_deep_agent_with_tool(self) -> None:
         agent = create_deep_agent(tools=[sample_tool])
         assert_all_deepagent_qualities(agent)
-        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name
+        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
 
     def test_deep_agent_with_middleware_with_tool(self) -> None:
         agent = create_deep_agent(middleware=[SampleMiddlewareWithTools()])
         assert_all_deepagent_qualities(agent)
-        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name
+        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
 
     def test_deep_agent_with_middleware_with_tool_and_state(self) -> None:
         agent = create_deep_agent(middleware=[SampleMiddlewareWithToolsAndState()])
         assert_all_deepagent_qualities(agent)
-        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name
-        assert "sample_input" in agent.stream_channels
+        assert "sample_tool" in agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
+        assert "sample_input" in agent.stream_channels  # type: ignore[operator]
 
     def test_deep_agent_with_subagents(self) -> None:
         subagents = [
@@ -130,7 +130,7 @@ class TestDeepAgents:
         ]
         agent = create_deep_agent(tools=[sample_tool], subagents=subagents, middleware=[ResearchMiddleware()])
         assert_all_deepagent_qualities(agent)
-        assert "research" in agent.stream_channels
+        assert "research" in agent.stream_channels  # type: ignore[operator]
         result = agent.invoke({"messages": [HumanMessage(content="Get surface level info on lebron james")]}, config={"recursion_limit": 100})
         agent_messages = [msg for msg in result.get("messages", []) if msg.type == "ai"]
         tool_calls = [tool_call for msg in agent_messages for tool_call in msg.tool_calls]

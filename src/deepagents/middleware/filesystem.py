@@ -438,7 +438,7 @@ TOOL_GENERATORS = {
 
 
 def _get_filesystem_tools(
-    backend: BackendProtocol,
+    backend: BackendProtocol | BackendFactory,
     custom_tool_descriptions: dict[str, str] | None = None,
 ) -> list[BaseTool]:
     """Get filesystem tools.
@@ -587,8 +587,8 @@ class FilesystemMiddleware(AgentMiddleware):
             update = tool_result.update
             if update is None:
                 return tool_result
-            message_updates = update.get("messages", [])
-            file_updates = update.get("files", {})
+            message_updates = update.get("messages", [])  # type: ignore[union-attr]
+            file_updates = update.get("files", {})  # type: ignore[union-attr]
 
             edited_message_updates = []
             for message in message_updates:

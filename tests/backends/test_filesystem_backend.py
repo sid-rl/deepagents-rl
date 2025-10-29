@@ -35,7 +35,7 @@ def test_filesystem_backend_normal_mode(tmp_path: Path) -> None:
     msg2 = be.write(str(root / "new.txt"), "new content")
     assert isinstance(msg2, WriteResult)
     assert msg2.error is None
-    assert msg2.path.endswith("new.txt")
+    assert msg2.path.endswith("new.txt")  # type: ignore[union-attr]
 
     # grep_raw
     matches = be.grep_raw("hello", path=str(root))

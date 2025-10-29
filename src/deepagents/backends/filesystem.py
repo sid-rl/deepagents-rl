@@ -46,6 +46,8 @@ class FilesystemBackend:
             root_dir: Optional root directory for file operations. If provided,
                      all file paths will be resolved relative to this directory.
                      If not provided, uses the current working directory.
+            virtual_mode: If True, treat paths as virtual and sandbox to root_dir
+            max_file_size_mb: Maximum file size in MB for reading/writing
         """
         self.cwd = Path(root_dir).resolve() if root_dir else Path.cwd()
         self.virtual_mode = virtual_mode
@@ -83,7 +85,7 @@ class FilesystemBackend:
             return path
         return (self.cwd / path).resolve()
 
-    def ls_info(self, path: str) -> list[FileInfo]:
+    def ls_info(self, path: str) -> list[FileInfo]:  # noqa: PLR0912
         """List files and directories in the specified directory (non-recursive).
 
         Args:
@@ -217,8 +219,8 @@ class FilesystemBackend:
                 with os.fdopen(fd, "r", encoding="utf-8") as f:
                     content = f.read()
             except OSError:
-                # Fallback to normal open if O_NOFOLLOW unsupported or fails
-                with open(resolved_path, encoding="utf-8") as f:
+                # Fallback to Path.open() if O_NOFOLLOW unsupported or fails
+                with resolved_path.open(encoding="utf-8") as f:
                     content = f.read()
 
             empty_msg = check_empty_content(content)
@@ -243,6 +245,7 @@ class FilesystemBackend:
         content: str,
     ) -> WriteResult:
         """Create a new file with content.
+
         Returns WriteResult. External storage sets files_update=None.
         """
         resolved_path = self._resolve_path(file_path)
@@ -274,6 +277,7 @@ class FilesystemBackend:
         replace_all: bool = False,
     ) -> EditResult:
         """Edit a file by replacing string occurrences.
+
         Returns EditResult. External storage sets files_update=None.
         """
         resolved_path = self._resolve_path(file_path)
@@ -288,7 +292,7 @@ class FilesystemBackend:
                 with os.fdopen(fd, "r", encoding="utf-8") as f:
                     content = f.read()
             except OSError:
-                with open(resolved_path, encoding="utf-8") as f:
+                with resolved_path.open(encoding="utf-8") as f:
                     content = f.read()
 
             result = perform_string_replacement(content, old_string, new_string, replace_all)
@@ -318,6 +322,16 @@ class FilesystemBackend:
         path: str | None = None,
         glob: str | None = None,
     ) -> list[GrepMatch] | str:
+        """Search for pattern in files.
+
+        Args:
+            pattern: Regular expression pattern to search for
+            path: Optional path to search within
+            glob: Optional glob pattern to filter files
+
+        Returns:
+            List of grep matches or error message string
+        """
         # Validate regex
         try:
             re.compile(pattern)
@@ -377,7 +391,8 @@ class FilesystemBackend:
             if self.virtual_mode:
                 try:
                     virt = "/" + str(p.resolve().relative_to(self.cwd))
-                except Exception:
+                except (ValueError, OSError):
+                    # Skip files outside root or with path resolution errors
                     continue
             else:
                 virt = str(p)
@@ -401,7 +416,7 @@ class FilesystemBackend:
         for fp in root.rglob("*"):
             if not fp.is_file():
                 continue
-            if include_glob and not wcglob.globmatch(fp.name, include_glob, flags=wcglob.BRACE):
+            if include_glob and not wcglob.globmatch(str(fp.name), include_glob, flags=wcglob.BRACE):
                 continue
             try:
                 if fp.stat().st_size > self.max_file_size_bytes:
@@ -417,7 +432,8 @@ class FilesystemBackend:
                     if self.virtual_mode:
                         try:
                             virt_path = "/" + str(fp.resolve().relative_to(self.cwd))
-                        except Exception:
+                        except (ValueError, OSError):
+                            # Skip files outside root or with path resolution errors
                             continue
                     else:
                         virt_path = str(fp)
@@ -425,7 +441,16 @@ class FilesystemBackend:
 
         return results
 
-    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+    def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:  # noqa: PLR0912
+        """Find files matching glob pattern.
+
+        Args:
+            pattern: Glob pattern to match files
+            path: Starting path for the search
+
+        Returns:
+            List of FileInfo dicts for matching files
+        """
         if pattern.startswith("/"):
             pattern = pattern.lstrip("/")
 

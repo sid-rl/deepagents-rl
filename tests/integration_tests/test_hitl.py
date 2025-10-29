@@ -45,11 +45,11 @@ class TestHITL:
         review_configs = interrupts["review_configs"]
         assert any(
             review_config["action_name"] == "sample_tool" and review_config["allowed_decisions"] == ["approve", "edit", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
         assert any(
             review_config["action_name"] == "get_soccer_scores" and review_config["allowed_decisions"] == ["approve", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
 
         result2 = agent.invoke(Command(resume={"decisions": [{"type": "approve"}, {"type": "approve"}]}), config=config)
@@ -69,7 +69,7 @@ class TestHITL:
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Use the task tool to kick off the general-purpose subagent. Tell it to call the sample tool, get the weather in New York and get scores for the latest soccer games in parallel",
+                        "content": "Use the task tool to kick off the general-purpose subagent. Tell it to call the sample tool, get the weather in New York and get scores for the latest soccer games in parallel",  # noqa: E501
                     }
                 ]
             },
@@ -84,11 +84,11 @@ class TestHITL:
         review_configs = interrupts["review_configs"]
         assert any(
             review_config["action_name"] == "sample_tool" and review_config["allowed_decisions"] == ["approve", "edit", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
         assert any(
             review_config["action_name"] == "get_soccer_scores" and review_config["allowed_decisions"] == ["approve", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
         result2 = agent.invoke(Command(resume={"decisions": [{"type": "approve"}, {"type": "approve"}]}), config=config)
         assert "__interrupt__" not in result2
@@ -116,7 +116,7 @@ class TestHITL:
                 "messages": [
                     {
                         "role": "user",
-                        "content": "Use the task tool to kick off the task_handler subagent. Tell it to call the sample tool, get the weather in New York and get scores for the latest soccer games in parallel",
+                        "content": "Use the task tool to kick off the task_handler subagent. Tell it to call the sample tool, get the weather in New York and get scores for the latest soccer games in parallel",  # noqa: E501
                     }
                 ]
             },
@@ -131,11 +131,11 @@ class TestHITL:
         review_configs = interrupts["review_configs"]
         assert any(
             review_config["action_name"] == "get_weather" and review_config["allowed_decisions"] == ["approve", "edit", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
         assert any(
             review_config["action_name"] == "get_soccer_scores" and review_config["allowed_decisions"] == ["approve", "edit", "reject"]
-                for review_config in review_configs
+            for review_config in review_configs
         )
         result2 = agent.invoke(Command(resume={"decisions": [{"type": "approve"}, {"type": "approve"}]}), config=config)
         assert "__interrupt__" not in result2

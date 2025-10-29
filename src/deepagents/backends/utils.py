@@ -185,7 +185,10 @@ def perform_string_replacement(
         return f"Error: String not found in file: '{old_string}'"
 
     if occurrences > 1 and not replace_all:
-        return f"Error: String '{old_string}' appears {occurrences} times in file. Use replace_all=True to replace all instances, or provide a more specific string with surrounding context."
+        return (
+            f"Error: String '{old_string}' appears {occurrences} times in file. "
+            "Use replace_all=True to replace all instances, or provide a more specific string with surrounding context."
+        )
 
     new_content = content.replace(old_string, new_string)
     return new_content, occurrences
@@ -196,7 +199,7 @@ def truncate_if_too_long(result: list[str] | str) -> list[str] | str:
     if isinstance(result, list):
         total_chars = sum(len(item) for item in result)
         if total_chars > TOOL_RESULT_TOKEN_LIMIT * 4:
-            return [*result[:len(result) * TOOL_RESULT_TOKEN_LIMIT * 4 // total_chars], TRUNCATION_GUIDANCE]
+            return [*result[: len(result) * TOOL_RESULT_TOKEN_LIMIT * 4 // total_chars], TRUNCATION_GUIDANCE]
         return result
     # string
     if len(result) > TOOL_RESULT_TOKEN_LIMIT * 4:

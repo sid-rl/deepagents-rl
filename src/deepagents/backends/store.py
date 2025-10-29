@@ -35,6 +35,7 @@ class StoreBackend:
         """Initialize StoreBackend with runtime.
 
         Args:
+            runtime: The runtime instance to use for store management
         """
         self.runtime = runtime
 
@@ -78,12 +79,12 @@ class StoreBackend:
         # called outside of a runnable context
         try:
             cfg = get_config()
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             return (namespace,)
 
         try:
             assistant_id = cfg.get("metadata", {}).get("assistant_id")  # type: ignore[assignment]
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             assistant_id = None
 
         if assistant_id:
@@ -138,7 +139,7 @@ class StoreBackend:
         namespace: tuple[str, ...],
         *,
         query: str | None = None,
-        filter: dict[str, Any] | None = None,
+        filter_dict: dict[str, Any] | None = None,
         page_size: int = 100,
     ) -> list[Item]:
         """Search store with automatic pagination to retrieve all results.
@@ -147,7 +148,7 @@ class StoreBackend:
             store: The store to search.
             namespace: Hierarchical path prefix to search within.
             query: Optional query for natural language search.
-            filter: Key-value pairs to filter results.
+            filter_dict: Key-value pairs to filter results.
             page_size: Number of items to fetch per page (default: 100).
 
         Returns:
@@ -166,7 +167,7 @@ class StoreBackend:
             page_items = store.search(
                 namespace,
                 query=query,
-                filter=filter,
+                filter=filter_dict,
                 limit=page_size,
                 offset=offset,
             )
@@ -232,15 +233,15 @@ class StoreBackend:
             )
 
         # Add directories to the results
-        for subdir in sorted(subdirs):
-            infos.append(
-                {
-                    "path": subdir,
-                    "is_dir": True,
-                    "size": 0,
-                    "modified_at": "",
-                }
-            )
+        infos.extend(
+            {
+                "path": subdir,
+                "is_dir": True,
+                "size": 0,
+                "modified_at": "",
+            }
+            for subdir in sorted(subdirs)
+        )
 
         infos.sort(key=lambda x: x.get("path", ""))
         return infos
@@ -257,7 +258,8 @@ class StoreBackend:
 
         Args:
             file_path: Absolute file path
-            offset: Line offset to start reading from (0-indexed)limit: Maximum number of lines to read
+            offset: Line offset to start reading from (0-indexed)
+            limit: Maximum number of lines to read
 
         Returns:
             Formatted file content with line numbers, or error message.
@@ -282,6 +284,7 @@ class StoreBackend:
         content: str,
     ) -> WriteResult:
         """Create a new file with content.
+
         Returns WriteResult. External storage sets files_update=None.
         """
         store = self._get_store()
@@ -306,6 +309,7 @@ class StoreBackend:
         replace_all: bool = False,
     ) -> EditResult:
         """Edit a file by replacing string occurrences.
+
         Returns EditResult. External storage sets files_update=None.
         """
         store = self._get_store()
@@ -343,6 +347,16 @@ class StoreBackend:
         path: str = "/",
         glob: str | None = None,
     ) -> list[GrepMatch] | str:
+        """Search for pattern in files.
+
+        Args:
+            pattern: Regular expression pattern to search for
+            path: Starting path for the search
+            glob: Optional glob pattern to filter files
+
+        Returns:
+            List of grep matches or error message string
+        """
         store = self._get_store()
         namespace = self._get_namespace()
         items = self._search_store_paginated(store, namespace)
@@ -355,6 +369,15 @@ class StoreBackend:
         return grep_matches_from_files(files, pattern, path, glob)
 
     def glob_info(self, pattern: str, path: str = "/") -> list[FileInfo]:
+        """Find files matching glob pattern.
+
+        Args:
+            pattern: Glob pattern to match files
+            path: Starting path for the search
+
+        Returns:
+            List of FileInfo dicts for matching files
+        """
         store = self._get_store()
         namespace = self._get_namespace()
         items = self._search_store_paginated(store, namespace)

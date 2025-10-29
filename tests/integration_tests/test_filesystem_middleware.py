@@ -1,6 +1,6 @@
 import uuid
 
-import pytest
+import pytest  # type: ignore[import-untyped]
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
@@ -32,7 +32,7 @@ def build_composite_state_backend(runtime, *, routes):
 class TestFilesystem:
     def test_filesystem_system_prompt_override(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: StateBackend(rt),
@@ -46,8 +46,9 @@ class TestFilesystem:
     def test_filesystem_system_prompt_override_with_composite_backend(self) -> None:
         def backend(rt):
             return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=backend,
@@ -61,7 +62,7 @@ class TestFilesystem:
 
     def test_filesystem_tool_prompt_override(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: StateBackend(rt),
@@ -73,7 +74,7 @@ class TestFilesystem:
                 )
             ],
         )
-        tools = agent.nodes["tools"].bound._tools_by_name
+        tools = agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
         assert "ls" in tools
         assert tools["ls"].description == "Charmander"
         assert "read_file" in tools
@@ -85,7 +86,7 @@ class TestFilesystem:
 
     def test_filesystem_tool_prompt_override_with_longterm_memory(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -98,7 +99,7 @@ class TestFilesystem:
             ],
             store=InMemoryStore(),
         )
-        tools = agent.nodes["tools"].bound._tools_by_name
+        tools = agent.nodes["tools"].bound._tools_by_name  # type: ignore[union-attr]
         assert "ls" in tools
         assert tools["ls"].description == "Charmander"
         assert "read_file" in tools
@@ -130,7 +131,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -143,7 +144,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="List your files in root")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/pizza.txt": FileData(
                         content=["Hello world"],
                         created_at="2021-01-01",
@@ -190,7 +191,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -203,7 +204,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="List all of your files in the /pokemon directory")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/pizza.txt": FileData(
                         content=["Hello world"],
                         created_at="2021-01-01",
@@ -236,7 +237,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -249,7 +250,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Read test.txt from the local filesystem")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/test.txt": FileData(
                         content=["Goodbye world"],
                         created_at="2021-01-01",
@@ -277,7 +278,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -290,7 +291,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Read test.txt from the memories directory")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/test.txt": FileData(
                         content=["Goodbye world"],
                         created_at="2021-01-01",
@@ -327,7 +328,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=(lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})),
@@ -340,7 +341,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Read the contents of the file about charmander from the memories directory.")],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
@@ -357,7 +358,7 @@ class TestFilesystem:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -372,7 +373,7 @@ class TestFilesystem:
                 "messages": [
                     HumanMessage(content="Write a haiku about Charmander to the memories directory in /charmander.txt, use the word 'fiery'")
                 ],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
@@ -396,7 +397,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -409,7 +410,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Write a haiku about Charmander to /memories/charmander.txt, use the word 'fiery'")],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
@@ -422,7 +423,7 @@ class TestFilesystem:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -435,7 +436,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Write a haiku about Charmander to /charmander.txt, use the word 'fiery'")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/charmander.txt": FileData(
                         content=["Hello world"],
                         created_at="2021-01-01",
@@ -463,7 +464,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -480,20 +481,20 @@ class TestFilesystem:
                         content="Edit the file about charmander in the memories directory, to replace all instances of the word 'fire' with 'embers'"
                     )
                 ],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
         messages = response["messages"]
         edit_file_message = next(message for message in messages if message.type == "tool" and message.name == "edit_file")
         assert edit_file_message is not None
-        assert store.get(("filesystem",), "/charmander.txt").value["content"] == ["The embers burns brightly. The embers burns hot."]
+        assert store.get(("filesystem",), "/charmander.txt").value["content"] == ["The embers burns brightly. The embers burns hot."]  # type: ignore[union-attr]
 
     def test_longterm_memory_multiple_tools(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -507,8 +508,10 @@ class TestFilesystem:
     def test_longterm_memory_multiple_tools_deepagent(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
+
         def backend(rt):
             return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+
         agent = create_deep_agent(backend=backend, checkpointer=checkpointer, store=store)
         assert_longterm_mem_tools(agent, store)
 
@@ -520,7 +523,7 @@ class TestFilesystem:
 
     def test_tool_call_with_tokens_exceeding_limit(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             tools=[get_nba_standings],
             middleware=[
                 FilesystemMiddleware(
@@ -538,7 +541,7 @@ class TestFilesystem:
 
     def test_tool_call_with_tokens_exceeding_custom_limit(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             tools=[get_nfl_standings],
             middleware=[
                 FilesystemMiddleware(
@@ -557,7 +560,7 @@ class TestFilesystem:
 
     def test_command_with_tool_call(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             tools=[get_la_liga_standings],
             middleware=[
                 FilesystemMiddleware(
@@ -576,7 +579,7 @@ class TestFilesystem:
 
     def test_command_with_tool_call_existing_state(self) -> None:
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             tools=[get_premier_league_standings],
             middleware=[
                 FilesystemMiddleware(
@@ -603,7 +606,7 @@ class TestFilesystem:
     def test_glob_search_shortterm_only(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: StateBackend(rt),
@@ -615,7 +618,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use glob to find all Python files")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/test.py": FileData(
                         content=["import os"],
                         created_at="2021-01-01",
@@ -672,7 +675,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -685,7 +688,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use glob to find all Python files in /memories")],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
@@ -717,7 +720,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -730,7 +733,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use glob to find all Python files")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/shortterm.py": FileData(
                         content=["# Shortterm file"],
                         created_at="2021-01-01",
@@ -755,7 +758,7 @@ class TestFilesystem:
     def test_grep_search_shortterm_only(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: StateBackend(rt),
@@ -767,7 +770,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use grep to find all files containing the word 'import'")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/test.py": FileData(
                         content=["import os", "import sys"],
                         created_at="2021-01-01",
@@ -824,7 +827,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -837,7 +840,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use grep to find all files in the memories directory containing the word 'fire'")],
-                "files": {},
+                "files": {},  # type: ignore[invalid-key]
             },
             config=config,
         )
@@ -869,7 +872,7 @@ class TestFilesystem:
             },
         )
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware(
                     backend=lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}),
@@ -882,7 +885,7 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [HumanMessage(content="Use grep to find all files containing 'DEBUG'")],
-                "files": {
+                "files": {  # type: ignore[invalid-key]
                     "/shortterm_config.py": FileData(
                         content=["DEBUG = False", "VERBOSE = True"],
                         created_at="2021-01-01",
@@ -907,7 +910,7 @@ class TestFilesystem:
     def test_default_backend_fallback(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
-            model=ChatAnthropic(model="claude-sonnet-4-20250514"),
+            model=ChatAnthropic(model="claude-sonnet-4-20250514"),  # type: ignore[call-arg]
             middleware=[
                 FilesystemMiddleware()  # No backend specified
             ],
