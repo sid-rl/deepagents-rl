@@ -11,18 +11,12 @@ from langchain_core.messages import (
 from langgraph.graph.message import add_messages
 from langgraph.store.memory import InMemoryStore
 
-from deepagents.middleware.filesystem import (
-    FILESYSTEM_SYSTEM_PROMPT,
-    FileData,
-    FilesystemMiddleware,
-    FilesystemState
-)
-from deepagents.backends import StoreBackend, CompositeBackend, StateBackend
-
-from deepagents.backends.utils import create_file_data, update_file_data
+from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends.utils import create_file_data, truncate_if_too_long, update_file_data
+from deepagents.middleware.filesystem import FILESYSTEM_SYSTEM_PROMPT, FileData, FilesystemMiddleware, FilesystemState
 from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
 from deepagents.middleware.subagents import DEFAULT_GENERAL_PURPOSE_DESCRIPTION, TASK_SYSTEM_PROMPT, TASK_TOOL_DESCRIPTION, SubAgentMiddleware
-from deepagents.backends.utils import truncate_if_too_long
+
 
 def build_composite_state_backend(runtime: ToolRuntime, *, routes):
     built_routes = {}
@@ -34,8 +28,9 @@ def build_composite_state_backend(runtime: ToolRuntime, *, routes):
     default_state = StateBackend(runtime)
     return CompositeBackend(default=default_state, routes=built_routes)
 
+
 class TestAddMiddleware:
-    def test_filesystem_middleware(self):
+    def test_filesystem_middleware(self) -> None:
         middleware = [FilesystemMiddleware()]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
         assert "files" in agent.stream_channels
@@ -47,12 +42,12 @@ class TestAddMiddleware:
         assert "glob" in agent_tools
         assert "grep" in agent_tools
 
-    def test_subagent_middleware(self):
+    def test_subagent_middleware(self) -> None:
         middleware = [SubAgentMiddleware(default_tools=[], subagents=[], default_model="claude-sonnet-4-20250514")]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
-        assert "task" in agent.nodes["tools"].bound._tools_by_name.keys()
+        assert "task" in agent.nodes["tools"].bound._tools_by_name
 
-    def test_multiple_middleware(self):
+    def test_multiple_middleware(self) -> None:
         middleware = [FilesystemMiddleware(), SubAgentMiddleware(default_tools=[], subagents=[], default_model="claude-sonnet-4-20250514")]
         agent = create_agent(model="claude-sonnet-4-20250514", middleware=middleware, tools=[])
         assert "files" in agent.stream_channels
@@ -67,48 +62,51 @@ class TestAddMiddleware:
 
 
 class TestFilesystemMiddleware:
-    def test_init_default(self):
+    def test_init_default(self) -> None:
         middleware = FilesystemMiddleware()
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
-    def test_init_with_composite_backend(self):
-        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+    def test_init_with_composite_backend(self) -> None:
+        def backend_factory(rt):
+            return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
         middleware = FilesystemMiddleware(backend=backend_factory)
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         assert len(middleware.tools) == 6
 
-    def test_init_custom_system_prompt_default(self):
+    def test_init_custom_system_prompt_default(self) -> None:
         middleware = FilesystemMiddleware(system_prompt="Custom system prompt")
         assert callable(middleware.backend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
-    def test_init_custom_system_prompt_with_composite(self):
-        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+    def test_init_custom_system_prompt_with_composite(self) -> None:
+        def backend_factory(rt):
+            return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
         middleware = FilesystemMiddleware(backend=backend_factory, system_prompt="Custom system prompt")
         assert callable(middleware.backend)
         assert middleware.system_prompt == "Custom system prompt"
         assert len(middleware.tools) == 6
 
-    def test_init_custom_tool_descriptions_default(self):
+    def test_init_custom_tool_descriptions_default(self) -> None:
         middleware = FilesystemMiddleware(custom_tool_descriptions={"ls": "Custom ls tool description"})
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
-    def test_init_custom_tool_descriptions_with_composite(self):
-        backend_factory = lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
+    def test_init_custom_tool_descriptions_with_composite(self) -> None:
+        def backend_factory(rt):
+            return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
         middleware = FilesystemMiddleware(backend=backend_factory, custom_tool_descriptions={"ls": "Custom ls tool description"})
         assert callable(middleware.backend)
         assert middleware.system_prompt == FILESYSTEM_SYSTEM_PROMPT
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         assert ls_tool.description == "Custom ls tool description"
 
-    def test_ls_shortterm(self):
+    def test_ls_shortterm(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -127,14 +125,11 @@ class TestFilesystemMiddleware:
         middleware = FilesystemMiddleware()
         ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
         result = ls_tool.invoke(
-            {
-                "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
-                "path": "/"
-            }
+            {"runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}), "path": "/"}
         )
         assert result == ["/test.txt", "/test2.txt"]
 
-    def test_ls_shortterm_with_path(self):
+    def test_ls_shortterm_with_path(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -175,7 +170,7 @@ class TestFilesystemMiddleware:
         # ls should also list subdirectories with trailing /
         assert "/pokemon/water/" in result
 
-    def test_ls_shortterm_lists_directories(self):
+    def test_ls_shortterm_lists_directories(self) -> None:
         """Test that ls lists directories with trailing / for traversal."""
         state = FilesystemState(
             messages=[],
@@ -218,7 +213,7 @@ class TestFilesystemMiddleware:
         assert "/pokemon/charmander.txt" not in result
         assert "/pokemon/water/squirtle.txt" not in result
 
-    def test_glob_search_shortterm_simple_pattern(self):
+    def test_glob_search_shortterm_simple_pattern(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -246,7 +241,6 @@ class TestFilesystemMiddleware:
         )
         middleware = FilesystemMiddleware()
         glob_search_tool = next(tool for tool in middleware.tools if tool.name == "glob")
-        print(glob_search_tool)
         result = glob_search_tool.invoke(
             {
                 "pattern": "*.py",
@@ -260,7 +254,7 @@ class TestFilesystemMiddleware:
         assert len(result) == 1
         assert result[0] == "/test.py"
 
-    def test_glob_search_shortterm_wildcard_pattern(self):
+    def test_glob_search_shortterm_wildcard_pattern(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -293,7 +287,7 @@ class TestFilesystemMiddleware:
         assert "/src/utils/helper.py" in result
         assert "/tests/test_main.py" in result
 
-    def test_glob_search_shortterm_with_path(self):
+    def test_glob_search_shortterm_with_path(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -327,7 +321,7 @@ class TestFilesystemMiddleware:
         assert "/src/utils/helper.py" not in result
         assert "/tests/test_main.py" not in result
 
-    def test_glob_search_shortterm_brace_expansion(self):
+    def test_glob_search_shortterm_brace_expansion(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -360,7 +354,7 @@ class TestFilesystemMiddleware:
         assert "/test.pyi" in result
         assert "/test.txt" not in result
 
-    def test_glob_search_shortterm_no_matches(self):
+    def test_glob_search_shortterm_no_matches(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -379,9 +373,9 @@ class TestFilesystemMiddleware:
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
-        print(glob_search_tool)
         assert result == []
-    def test_grep_search_shortterm_files_with_matches(self):
+
+    def test_grep_search_shortterm_files_with_matches(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -414,7 +408,7 @@ class TestFilesystemMiddleware:
         assert "/helper.txt" in result
         assert "/main.py" not in result
 
-    def test_grep_search_shortterm_content_mode(self):
+    def test_grep_search_shortterm_content_mode(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -438,7 +432,7 @@ class TestFilesystemMiddleware:
         assert "2: import sys" in result
         assert "print" not in result
 
-    def test_grep_search_shortterm_count_mode(self):
+    def test_grep_search_shortterm_count_mode(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -466,7 +460,7 @@ class TestFilesystemMiddleware:
         assert "/test.py:2" in result or "/test.py: 2" in result
         assert "/main.py:1" in result or "/main.py: 1" in result
 
-    def test_grep_search_shortterm_with_include(self):
+    def test_grep_search_shortterm_with_include(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -494,7 +488,7 @@ class TestFilesystemMiddleware:
         assert "/test.py" in result
         assert "/test.txt" not in result
 
-    def test_grep_search_shortterm_with_path(self):
+    def test_grep_search_shortterm_with_path(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -522,7 +516,7 @@ class TestFilesystemMiddleware:
         assert "/src/main.py" in result
         assert "/tests/test.py" not in result
 
-    def test_grep_search_shortterm_regex_pattern(self):
+    def test_grep_search_shortterm_regex_pattern(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -542,12 +536,11 @@ class TestFilesystemMiddleware:
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
-        print(result)
         assert "1: def hello():" in result
         assert "2: def world():" in result
         assert "x = 5" not in result
 
-    def test_grep_search_shortterm_no_matches(self):
+    def test_grep_search_shortterm_no_matches(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -568,7 +561,7 @@ class TestFilesystemMiddleware:
         )
         assert result == "No matches found"
 
-    def test_grep_search_shortterm_invalid_regex(self):
+    def test_grep_search_shortterm_invalid_regex(self) -> None:
         state = FilesystemState(
             messages=[],
             files={
@@ -589,13 +582,13 @@ class TestFilesystemMiddleware:
         )
         assert "Invalid regex pattern" in result
 
-    def test_search_store_paginated_empty(self):
+    def test_search_store_paginated_empty(self) -> None:
         """Test pagination with no items."""
         store = InMemoryStore()
         result = StoreBackend._search_store_paginated(self, store, ("filesystem",))
         assert result == []
 
-    def test_search_store_paginated_less_than_page_size(self):
+    def test_search_store_paginated_less_than_page_size(self) -> None:
         """Test pagination with fewer items than page size."""
         store = InMemoryStore()
         for i in range(5):
@@ -615,7 +608,7 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(5)}
 
-    def test_search_store_paginated_exact_page_size(self):
+    def test_search_store_paginated_exact_page_size(self) -> None:
         """Test pagination with exactly one page of items."""
         store = InMemoryStore()
         for i in range(10):
@@ -634,7 +627,7 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(10)}
 
-    def test_search_store_paginated_multiple_pages(self):
+    def test_search_store_paginated_multiple_pages(self) -> None:
         """Test pagination with multiple pages of items."""
         store = InMemoryStore()
         for i in range(250):
@@ -653,7 +646,7 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(250)}
 
-    def test_search_store_paginated_with_filter(self):
+    def test_search_store_paginated_with_filter(self) -> None:
         """Test pagination with filter parameter."""
         store = InMemoryStore()
         for i in range(20):
@@ -675,7 +668,7 @@ class TestFilesystemMiddleware:
         for item in result:
             assert item.value.get("type") == "test"
 
-    def test_search_store_paginated_custom_page_size(self):
+    def test_search_store_paginated_custom_page_size(self) -> None:
         """Test pagination with custom page size."""
         store = InMemoryStore()
         # Add 55 items
@@ -696,7 +689,7 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(55)}
 
-    def test_create_file_data_splits_long_lines(self):
+    def test_create_file_data_splits_long_lines(self) -> None:
         long_line = "a" * 3500
         short_line = "short line"
         content = f"{short_line}\n{long_line}"
@@ -711,7 +704,7 @@ class TestFilesystemMiddleware:
         assert file_data["content"][1] == "a" * 2000
         assert file_data["content"][2] == "a" * 1500
 
-    def test_update_file_data_splits_long_lines(self):
+    def test_update_file_data_splits_long_lines(self) -> None:
         initial_file_data = create_file_data("initial content")
 
         long_line = "b" * 5000
@@ -736,7 +729,7 @@ class TestFilesystemMiddleware:
 class TestSubagentMiddleware:
     """Test the SubagentMiddleware class."""
 
-    def test_subagent_middleware_init(self):
+    def test_subagent_middleware_init(self) -> None:
         middleware = SubAgentMiddleware(
             default_model="gpt-4o-mini",
         )
@@ -747,7 +740,7 @@ class TestSubagentMiddleware:
         expected_desc = TASK_TOOL_DESCRIPTION.format(available_agents=f"- general-purpose: {DEFAULT_GENERAL_PURPOSE_DESCRIPTION}")
         assert middleware.tools[0].description == expected_desc
 
-    def test_default_subagent_with_tools(self):
+    def test_default_subagent_with_tools(self) -> None:
         middleware = SubAgentMiddleware(
             default_model="gpt-4o-mini",
             default_tools=[],
@@ -755,7 +748,7 @@ class TestSubagentMiddleware:
         assert middleware is not None
         assert middleware.system_prompt == TASK_SYSTEM_PROMPT
 
-    def test_default_subagent_custom_system_prompt(self):
+    def test_default_subagent_custom_system_prompt(self) -> None:
         middleware = SubAgentMiddleware(
             default_model="gpt-4o-mini",
             default_tools=[],
@@ -888,14 +881,12 @@ class TestPatchToolCallsMiddleware:
 
 
 class TestTruncation:
-    def test_truncate_list_result_no_truncation(self):
-
+    def test_truncate_list_result_no_truncation(self) -> None:
         items = ["/file1.py", "/file2.py", "/file3.py"]
         result = truncate_if_too_long(items)
         assert result == items
 
-    def test_truncate_list_result_with_truncation(self):
-
+    def test_truncate_list_result_with_truncation(self) -> None:
         # Create a list that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
         large_items = [f"/very_long_file_path_{'x' * 100}_{i}.py" for i in range(1000)]
         result = truncate_if_too_long(large_items)
@@ -906,14 +897,12 @@ class TestTruncation:
         assert "results truncated" in result[-1]
         assert "try being more specific" in result[-1]
 
-    def test_truncate_string_result_no_truncation(self):
-
+    def test_truncate_string_result_no_truncation(self) -> None:
         content = "short content"
         result = truncate_if_too_long(content)
         assert result == content
 
-    def test_truncate_string_result_with_truncation(self):
-
+    def test_truncate_string_result_with_truncation(self) -> None:
         # Create string that exceeds the token limit (20000 tokens * 4 chars = 80000 chars)
         large_content = "x" * 100000
         result = truncate_if_too_long(large_content)

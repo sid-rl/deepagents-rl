@@ -65,6 +65,9 @@ ignore = [
     "PLR0913", # Too many arguments in function definition
     "PLC0414", # Inconsistent with how type checkers expect to be notified of intentional re-exports
     "C901",    # Too complex
+    "PLR2004", # Magic values in comparisons (common in tests)
+    "DTZ",     # Datetime without timezone (not always needed)
+    "FBT",     # Boolean positional arguments (common pattern)
 ]
 unfixable = ["B028"]  # Rules that shouldn't be auto-fixed
 
@@ -83,7 +86,15 @@ ignore-var-parameters = true
     "D1",      # Skip documentation rules in tests
     "S101",    # Allow asserts in tests
     "S311",    # Allow pseudo-random generators in tests
-    # Add more test-specific ignores
+    "ANN",     # Skip type annotations in tests
+    "RUF012",  # Allow mutable class attributes in tests
+]
+"examples/*" = [
+    "D",       # Skip documentation rules in examples
+    "INP001",  # Examples don't need __init__.py
+    "E501",    # Allow longer lines in examples
+    "FBT",     # Allow boolean positional arguments in examples
+    "ANN",     # Skip type annotations in examples
 ]
 
 [tool.mypy]

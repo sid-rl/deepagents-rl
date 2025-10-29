@@ -7,13 +7,13 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
+from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from deepagents.graph import create_deep_agent
 from deepagents.middleware.filesystem import (
     WRITE_FILE_TOOL_DESCRIPTION,
     FileData,
     FilesystemMiddleware,
 )
-from deepagents.backends import StateBackend, StoreBackend, CompositeBackend
 from tests.utils import ResearchMiddleware, get_la_liga_standings, get_nba_standings, get_nfl_standings, get_premier_league_standings
 
 
@@ -30,7 +30,7 @@ def build_composite_state_backend(runtime, *, routes):
 
 @pytest.mark.requires("langchain_anthropic")
 class TestFilesystem:
-    def test_filesystem_system_prompt_override(self):
+    def test_filesystem_system_prompt_override(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
@@ -43,8 +43,9 @@ class TestFilesystem:
         response = agent.invoke({"messages": [HumanMessage(content="What do you like?")]})
         assert "pokemon" in response["messages"][1].text.lower()
 
-    def test_filesystem_system_prompt_override_with_composite_backend(self):
-        backend = (lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}))
+    def test_filesystem_system_prompt_override_with_composite_backend(self) -> None:
+        def backend(rt):
+            return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
@@ -58,7 +59,7 @@ class TestFilesystem:
         response = agent.invoke({"messages": [HumanMessage(content="What do you like?")]})
         assert "pizza" in response["messages"][1].text.lower()
 
-    def test_filesystem_tool_prompt_override(self):
+    def test_filesystem_tool_prompt_override(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
@@ -82,7 +83,7 @@ class TestFilesystem:
         assert "edit_file" in tools
         assert tools["edit_file"].description == "Squirtle"
 
-    def test_filesystem_tool_prompt_override_with_longterm_memory(self):
+    def test_filesystem_tool_prompt_override_with_longterm_memory(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             middleware=[
@@ -107,7 +108,7 @@ class TestFilesystem:
         assert "edit_file" in tools
         assert tools["edit_file"].description == "Squirtle"
 
-    def test_ls_longterm_without_path(self):
+    def test_ls_longterm_without_path(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -167,7 +168,7 @@ class TestFilesystem:
         assert "/pokemon/" in ls_message.text
         assert "/memories/" in ls_message.text
 
-    def test_ls_longterm_with_path(self):
+    def test_ls_longterm_with_path(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -222,7 +223,7 @@ class TestFilesystem:
         assert "/pokemon/squirtle.txt" in ls_message.text
         assert "/memories/pokemon/charmander.txt" not in ls_message.text
 
-    def test_read_file_longterm_local_file(self):
+    def test_read_file_longterm_local_file(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -263,7 +264,7 @@ class TestFilesystem:
         assert read_file_message is not None
         assert "Goodbye world" in read_file_message.content
 
-    def test_read_file_longterm_store_file(self):
+    def test_read_file_longterm_store_file(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -304,7 +305,7 @@ class TestFilesystem:
         assert read_file_message is not None
         assert "Hello world" in read_file_message.content
 
-    def test_read_file_longterm(self):
+    def test_read_file_longterm(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -352,7 +353,7 @@ class TestFilesystem:
         )
         assert ai_msg_w_toolcall is not None
 
-    def test_write_file_longterm(self):
+    def test_write_file_longterm(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
@@ -368,7 +369,9 @@ class TestFilesystem:
         config = {"configurable": {"thread_id": uuid.uuid4()}}
         response = agent.invoke(
             {
-                "messages": [HumanMessage(content="Write a haiku about Charmander to the memories directory in /charmander.txt, use the word 'fiery'")],
+                "messages": [
+                    HumanMessage(content="Write a haiku about Charmander to the memories directory in /charmander.txt, use the word 'fiery'")
+                ],
                 "files": {},
             },
             config=config,
@@ -380,7 +383,7 @@ class TestFilesystem:
         assert file_item is not None
         assert any("fiery" in c for c in file_item.value["content"]) or any("Fiery" in c for c in file_item.value["content"])
 
-    def test_write_file_fail_already_exists_in_store(self):
+    def test_write_file_fail_already_exists_in_store(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -415,7 +418,7 @@ class TestFilesystem:
         assert write_file_message is not None
         assert "Cannot write" in write_file_message.content
 
-    def test_write_file_fail_already_exists_in_local(self):
+    def test_write_file_fail_already_exists_in_local(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
@@ -447,7 +450,7 @@ class TestFilesystem:
         assert write_file_message is not None
         assert "Cannot write" in write_file_message.content
 
-    def test_edit_file_longterm(self):
+    def test_edit_file_longterm(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -473,7 +476,9 @@ class TestFilesystem:
         response = agent.invoke(
             {
                 "messages": [
-                    HumanMessage(content="Edit the file about charmander in the memories directory, to replace all instances of the word 'fire' with 'embers'")
+                    HumanMessage(
+                        content="Edit the file about charmander in the memories directory, to replace all instances of the word 'fire' with 'embers'"
+                    )
                 ],
                 "files": {},
             },
@@ -484,7 +489,7 @@ class TestFilesystem:
         assert edit_file_message is not None
         assert store.get(("filesystem",), "/charmander.txt").value["content"] == ["The embers burns brightly. The embers burns hot."]
 
-    def test_longterm_memory_multiple_tools(self):
+    def test_longterm_memory_multiple_tools(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_agent(
@@ -499,20 +504,21 @@ class TestFilesystem:
         )
         assert_longterm_mem_tools(agent, store)
 
-    def test_longterm_memory_multiple_tools_deepagent(self):
+    def test_longterm_memory_multiple_tools_deepagent(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
-        backend = (lambda rt: build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))}))
+        def backend(rt):
+            return build_composite_state_backend(rt, routes={"/memories/": (lambda r: StoreBackend(r))})
         agent = create_deep_agent(backend=backend, checkpointer=checkpointer, store=store)
         assert_longterm_mem_tools(agent, store)
 
-    def test_shortterm_memory_multiple_tools_deepagent(self):
+    def test_shortterm_memory_multiple_tools_deepagent(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         agent = create_deep_agent(backend=lambda rt: StateBackend(rt), checkpointer=checkpointer, store=store)
         assert_shortterm_mem_tools(agent)
 
-    def test_tool_call_with_tokens_exceeding_limit(self):
+    def test_tool_call_with_tokens_exceeding_limit(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             tools=[get_nba_standings],
@@ -528,9 +534,9 @@ class TestFilesystem:
         assert response["messages"][2].type == "tool"
         assert len(response["messages"][2].content) < 10000
         assert len(response["files"].keys()) == 1
-        assert any("large_tool_results" in key for key in response["files"].keys())
+        assert any("large_tool_results" in key for key in response["files"])
 
-    def test_tool_call_with_tokens_exceeding_custom_limit(self):
+    def test_tool_call_with_tokens_exceeding_custom_limit(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             tools=[get_nfl_standings],
@@ -547,9 +553,9 @@ class TestFilesystem:
         assert response["messages"][2].type == "tool"
         assert len(response["messages"][2].content) < 1500
         assert len(response["files"].keys()) == 1
-        assert any("large_tool_results" in key for key in response["files"].keys())
+        assert any("large_tool_results" in key for key in response["files"])
 
-    def test_command_with_tool_call(self):
+    def test_command_with_tool_call(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             tools=[get_la_liga_standings],
@@ -566,9 +572,9 @@ class TestFilesystem:
         assert response["messages"][2].type == "tool"
         assert len(response["messages"][2].content) < 1500
         assert len(response["files"].keys()) == 1
-        assert any("large_tool_results" in key for key in response["files"].keys())
+        assert any("large_tool_results" in key for key in response["files"])
 
-    def test_command_with_tool_call_existing_state(self):
+    def test_command_with_tool_call_existing_state(self) -> None:
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
             tools=[get_premier_league_standings],
@@ -590,11 +596,11 @@ class TestFilesystem:
         assert response["messages"][2].type == "tool"
         assert len(response["messages"][2].content) < 1500
         assert len(response["files"].keys()) == 2
-        assert any("large_tool_results" in key for key in response["files"].keys())
-        assert "/test.txt" in response["files"].keys()
+        assert any("large_tool_results" in key for key in response["files"])
+        assert "/test.txt" in response["files"]
         assert "research" in response
 
-    def test_glob_search_shortterm_only(self):
+    def test_glob_search_shortterm_only(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
@@ -635,7 +641,7 @@ class TestFilesystem:
         assert "/main.py" in glob_message.content
         assert "/readme.txt" not in glob_message.content
 
-    def test_glob_search_longterm_only(self):
+    def test_glob_search_longterm_only(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -689,7 +695,7 @@ class TestFilesystem:
         assert "/memories/settings.py" in glob_message.content
         assert "/memories/notes.txt" not in glob_message.content
 
-    def test_glob_search_mixed_memory(self):
+    def test_glob_search_mixed_memory(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -746,7 +752,7 @@ class TestFilesystem:
         assert "/shortterm.txt" not in glob_message.content
         assert "/memories/longterm.txt" not in glob_message.content
 
-    def test_grep_search_shortterm_only(self):
+    def test_grep_search_shortterm_only(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
@@ -787,7 +793,7 @@ class TestFilesystem:
         assert "/helper.py" in grep_message.content
         assert "/main.py" not in grep_message.content
 
-    def test_grep_search_longterm_only(self):
+    def test_grep_search_longterm_only(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -841,7 +847,7 @@ class TestFilesystem:
         assert "/memories/pokemon/squirtle.txt" not in grep_message.content
         assert "/memories/pokemon/bulbasaur.txt" not in grep_message.content
 
-    def test_grep_search_mixed_memory(self):
+    def test_grep_search_mixed_memory(self) -> None:
         checkpointer = MemorySaver()
         store = InMemoryStore()
         store.put(
@@ -893,13 +899,12 @@ class TestFilesystem:
         )
         messages = response["messages"]
         grep_message = next(message for message in messages if message.type == "tool" and message.name == "grep")
-        print(grep_message.content)
         assert "/shortterm_config.py" in grep_message.content
         assert "/memories/longterm_config.py" in grep_message.content
         assert "/shortterm_main.py" not in grep_message.content
         assert "/memories/longterm_settings.py" not in grep_message.content
 
-    def test_default_backend_fallback(self):
+    def test_default_backend_fallback(self) -> None:
         checkpointer = MemorySaver()
         agent = create_agent(
             model=ChatAnthropic(model="claude-sonnet-4-20250514"),
@@ -928,7 +933,7 @@ class TestFilesystem:
 
 
 # Take actions on multiple threads to test longterm memory
-def assert_longterm_mem_tools(agent, store):
+def assert_longterm_mem_tools(agent, store) -> None:
     # Write a longterm memory file
     config = {"configurable": {"thread_id": uuid.uuid4()}}
     agent.invoke(
@@ -984,7 +989,7 @@ def assert_longterm_mem_tools(agent, store):
     assert "ember" in read_file_message.content or "Ember" in read_file_message.content
 
 
-def assert_shortterm_mem_tools(agent):
+def assert_shortterm_mem_tools(agent) -> None:
     # Write a shortterm memory file
     config = {"configurable": {"thread_id": uuid.uuid4()}}
     response = agent.invoke(
