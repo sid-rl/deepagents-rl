@@ -363,7 +363,7 @@ dependencies = [
     { name = "wcmatch" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "build" },
     { name = "langchain-openai" },
@@ -371,8 +371,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "twine" },
 ]
-
-[package.dev-dependencies]
 lint = [
     { name = "ruff" },
 ]
@@ -382,19 +380,20 @@ typing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "build", marker = "extra == 'dev'" },
     { name = "langchain", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-anthropic", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-core", specifier = ">=1.0.0,<2.0.0" },
-    { name = "langchain-openai", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "twine", marker = "extra == 'dev'" },
     { name = "wcmatch" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
+dev = [
+    { name = "build" },
+    { name = "langchain-openai" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "twine" },
+]
 lint = [{ name = "ruff", specifier = ">=0.12.2,<0.13.0" }]
 typing = [{ name = "ty" }]
 

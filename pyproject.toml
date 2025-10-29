@@ -12,7 +12,7 @@ dependencies = [
     "wcmatch"
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest",
     "pytest-cov",
@@ -20,8 +20,6 @@ dev = [
     "twine",
     "langchain-openai",
 ]
-
-[dependency-groups]
 lint = [
     "ruff>=0.12.2,<0.13.0",
 ]

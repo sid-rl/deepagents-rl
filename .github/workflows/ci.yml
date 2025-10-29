@@ -97,6 +97,9 @@ jobs:
         run: uv sync --extra dev
 
       - name: Run tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: uv run pytest tests/ -v --cov=deepagents --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
