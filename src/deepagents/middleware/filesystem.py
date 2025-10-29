@@ -567,84 +567,69 @@ class FilesystemMiddleware(AgentMiddleware):
             request.system_prompt = request.system_prompt + "\n\n" + self.system_prompt if request.system_prompt else self.system_prompt
         return await handler(request)
 
+    def _process_large_message(
+        self,
+        message: ToolMessage,
+        resolved_backend: BackendProtocol,
+    ) -> tuple[ToolMessage, dict[str, FileData] | None]:
+        content = message.content
+        if not isinstance(content, str) or len(content) <= 4 * self.tool_token_limit_before_evict:
+            return message, None
+
+        file_path = f"/large_tool_results/{message.tool_call_id}"
+        result = resolved_backend.write(file_path, content)
+        if result.error:
+            return message, None
+        content_sample = format_content_with_line_numbers(content.splitlines()[:10], start_line=1)
+        processed_message = ToolMessage(
+            TOO_LARGE_TOOL_MSG.format(
+                tool_call_id=message.tool_call_id,
+                file_path=file_path,
+                content_sample=content_sample,
+            ),
+            tool_call_id=message.tool_call_id,
+        )
+        return processed_message, result.files_update
+
     def _intercept_large_tool_result(self, tool_result: ToolMessage | Command, runtime: ToolRuntime) -> ToolMessage | Command:
         if isinstance(tool_result, ToolMessage) and isinstance(tool_result.content, str):
-            content = tool_result.content
-            if self.tool_token_limit_before_evict and len(content) > 4 * self.tool_token_limit_before_evict:
-                file_path = f"/large_tool_results/{tool_result.tool_call_id}"
-                resolved_backend = _get_backend(self.backend, runtime)
-                result = resolved_backend.write(file_path, content)
-                if result.error:
-                    return ToolMessage(
-                        f"Error saving large tool result: {result.error}",
-                        tool_call_id=tool_result.tool_call_id,
-                    )
-                content_sample = format_content_with_line_numbers(content.splitlines()[:10], start_line=1)
-                message = ToolMessage(
-                    TOO_LARGE_TOOL_MSG.format(
-                        tool_call_id=tool_result.tool_call_id,
-                        file_path=file_path,
-                        content_sample=content_sample,
-                    ),
-                    tool_call_id=tool_result.tool_call_id,
-                )
+            if not (self.tool_token_limit_before_evict and
+                    len(tool_result.content) > 4 * self.tool_token_limit_before_evict):
+                return tool_result
+            resolved_backend = _get_backend(self.backend, runtime)
+            processed_message, files_update = self._process_large_message(
+                tool_result,
+                resolved_backend,
+            )
+            return (Command(update={
+                "files": files_update,
+                "messages": [processed_message],
+            }) if files_update is not None else processed_message)
 
-                # Check if backend uses state (files_update is not None)
-                if result.files_update is not None:
-                    return Command(update={
-                        "files": result.files_update,
-                        "messages": [message],
-                    })
-                else:
-                    return message
         elif isinstance(tool_result, Command):
             update = tool_result.update
             if update is None:
                 return tool_result
-            message_updates = update.get("messages", [])
-            file_updates = update.get("files", {})
-
-            # Resolve backend once for all messages
+            command_messages = update.get("messages", [])
+            accumulated_file_updates = dict(update.get("files", {}))
             resolved_backend = _get_backend(self.backend, runtime)
+            processed_messages = []
+            for message in command_messages:
+                if not (self.tool_token_limit_before_evict and
+                        isinstance(message, ToolMessage) and
+                        isinstance(message.content, str) and
+                        len(message.content) > 4 * self.tool_token_limit_before_evict):
+                    processed_messages.append(message)
+                    continue
+                processed_message, files_update = self._process_large_message(
+                    message,
+                    resolved_backend,
+                )
+                processed_messages.append(processed_message)
+                if files_update is not None:
+                    accumulated_file_updates.update(files_update)
+            return Command(update={**update, "messages": processed_messages, "files": accumulated_file_updates})
 
-            edited_message_updates = []
-            for message in message_updates:
-                if self.tool_token_limit_before_evict and isinstance(message, ToolMessage) and isinstance(message.content, str):
-                    content = message.content
-                    if len(content) > 4 * self.tool_token_limit_before_evict:
-                        file_path = f"/large_tool_results/{message.tool_call_id}"
-
-                        # Write to backend
-                        result = resolved_backend.write(file_path, content)
-
-                        if result.error:
-                            # If write fails, keep original message with error prefix
-                            edited_message_updates.append(
-                                ToolMessage(
-                                    f"Error saving large tool result: {result.error}\n\n{content}",
-                                    tool_call_id=message.tool_call_id,
-                                )
-                            )
-                            continue
-
-                        # Prepare content sample
-                        content_sample = format_content_with_line_numbers(content.splitlines()[:10], start_line=1)
-                        edited_message_updates.append(
-                            ToolMessage(
-                                TOO_LARGE_TOOL_MSG.format(
-                                    tool_call_id=message.tool_call_id,
-                                    file_path=file_path,
-                                    content_sample=content_sample,
-                                ),
-                                tool_call_id=message.tool_call_id,
-                            )
-                        )
-
-                        if result.files_update is not None:
-                            file_updates.update(result.files_update)
-                        continue
-                edited_message_updates.append(message)
-            return Command(update={**update, "messages": edited_message_updates, "files": file_updates})
         return tool_result
 
     def wrap_tool_call(
