@@ -28,6 +28,7 @@ from deepagents.backends.utils import (
     format_content_with_line_numbers,
     format_grep_matches,
     truncate_if_too_long,
+    sanitize_tool_call_id,
 )
 
 EMPTY_CONTENT_WARNING = "System reminder: File exists but has empty contents"
@@ -226,6 +227,15 @@ All file paths must start with a /.
 
 
 def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> BackendProtocol:
+    """Get the resolved backend instance from backend or factory.
+
+    Args:
+        backend: Backend instance or factory function.
+        runtime: The tool runtime context.
+
+    Returns:
+        Resolved backend instance.
+    """
     if callable(backend):
         return backend(runtime)
     return backend
@@ -531,6 +541,19 @@ class FilesystemMiddleware(AgentMiddleware):
 
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
 
+    def _get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
+        """Get the resolved backend instance from backend or factory.
+
+        Args:
+            runtime: The tool runtime context.
+
+        Returns:
+            Resolved backend instance.
+        """
+        if callable(self.backend):
+            return self.backend(runtime)
+        return self.backend
+
     def wrap_model_call(
         self,
         request: ModelRequest,
@@ -576,7 +599,8 @@ class FilesystemMiddleware(AgentMiddleware):
         if not isinstance(content, str) or len(content) <= 4 * self.tool_token_limit_before_evict:
             return message, None
 
-        file_path = f"/large_tool_results/{message.tool_call_id}"
+        sanitized_id = sanitize_tool_call_id(message.tool_call_id)
+        file_path = f"/large_tool_results/{sanitized_id}"
         result = resolved_backend.write(file_path, content)
         if result.error:
             return message, None
@@ -596,7 +620,7 @@ class FilesystemMiddleware(AgentMiddleware):
             if not (self.tool_token_limit_before_evict and
                     len(tool_result.content) > 4 * self.tool_token_limit_before_evict):
                 return tool_result
-            resolved_backend = _get_backend(self.backend, runtime)
+            resolved_backend = self._get_backend(runtime)
             processed_message, files_update = self._process_large_message(
                 tool_result,
                 resolved_backend,
@@ -612,7 +636,7 @@ class FilesystemMiddleware(AgentMiddleware):
                 return tool_result
             command_messages = update.get("messages", [])
             accumulated_file_updates = dict(update.get("files", {}))
-            resolved_backend = _get_backend(self.backend, runtime)
+            resolved_backend = self._get_backend(runtime)
             processed_messages = []
             for message in command_messages:
                 if not (self.tool_token_limit_before_evict and

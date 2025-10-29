@@ -908,6 +908,29 @@ class TestFilesystemMiddleware:
         assert "/large_tool_results/test_123" in result.update["files"]
         assert result.update["custom_key"] == "custom_value"
 
+    def test_sanitize_tool_call_id(self):
+        """Test that tool_call_id is sanitized to prevent path traversal."""
+        from deepagents.backends.utils import sanitize_tool_call_id
+
+        assert sanitize_tool_call_id("call_123") == "call_123"
+        assert sanitize_tool_call_id("call/123") == "call_123"
+        assert sanitize_tool_call_id("test.id") == "test_id"
+
+    def test_intercept_sanitizes_tool_call_id(self):
+        """Test that tool_call_id with dangerous characters is sanitized in file path."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        large_content = "x" * 5000
+        tool_message = ToolMessage(content=large_content, tool_call_id="test/call.id")
+        result = middleware._intercept_large_tool_result(tool_message, runtime)
+
+        assert isinstance(result, Command)
+        assert "/large_tool_results/test_call_id" in result.update["files"]
+
 
 @pytest.mark.requires("langchain_openai")
 class TestSubagentMiddleware:
