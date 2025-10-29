@@ -14,4 +14,4 @@ format format_diff:
 	[ "$(PYTHON_FILES)" = "" ] || uv run --group lint ruff check --fix $(PYTHON_FILES)
 
 test:
-	uv run --group dev pytest tests/ -v
+	uv run --group test pytest tests/ -v

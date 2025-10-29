@@ -40,11 +40,8 @@ jobs:
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install dependencies
-        run: uv sync --extra dev
-
       - name: Build package
-        run: uv run python -m build
+        run: uv build
 
       - name: Store the distribution packages
         uses: actions/upload-artifact@v4

@@ -13,11 +13,9 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
+test = [
     "pytest",
     "pytest-cov",
-    "build",
-    "twine",
     "langchain-openai",
 ]
 lint = [
@@ -26,21 +24,21 @@ lint = [
 typing = [
     "ty",
 ]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
+    { include-group = "typing" },
+]
 
 [build-system]
-requires = ["setuptools>=73.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["deepagents*"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/deepagents"]
 
-[tool.setuptools.package-dir]
-"" = "src"
-
-[tool.setuptools.package-data]
-"*" = ["py.typed"]
+[tool.hatch.build.targets.wheel.force-include]
+"src/deepagents/py.typed" = "deepagents/py.typed"
 
 [tool.ruff]
 line-length = 150
