@@ -1,16 +1,17 @@
 """Main entry point and CLI loop for deepagents."""
-import sys
+
 import argparse
 import asyncio
+import sys
 from pathlib import Path
 
-from .config import console, COLORS, DEEP_AGENTS_ASCII, create_model, SessionState
-from .tools import tavily_client, http_request, web_search
-from .ui import show_help, TokenTracker
-from .input import create_prompt_session
+from .agent import create_agent_with_config, list_agents, reset_agent
+from .commands import execute_bash_command, handle_command
+from .config import COLORS, DEEP_AGENTS_ASCII, SessionState, console, create_model
 from .execution import execute_task
-from .commands import handle_command, execute_bash_command
-from .agent import list_agents, reset_agent, create_agent_with_config
+from .input import create_prompt_session
+from .tools import http_request, tavily_client, web_search
+from .ui import TokenTracker, show_help
 
 
 def check_cli_dependencies():
@@ -44,13 +45,13 @@ def check_cli_dependencies():
 
     if missing:
         print("\n❌ Missing required CLI dependencies!")
-        print(f"\nThe following packages are required to use the deepagents CLI:")
+        print("\nThe following packages are required to use the deepagents CLI:")
         for pkg in missing:
             print(f"  - {pkg}")
-        print(f"\nPlease install them with:")
-        print(f"  pip install deepagents[cli]")
-        print(f"\nOr install all dependencies:")
-        print(f"  pip install 'deepagents[cli]'")
+        print("\nPlease install them with:")
+        print("  pip install deepagents[cli]")
+        print("\nOr install all dependencies:")
+        print("  pip install 'deepagents[cli]'")
         sys.exit(1)
 
 
@@ -73,7 +74,9 @@ def parse_args():
     # Reset command
     reset_parser = subparsers.add_parser("reset", help="Reset an agent")
     reset_parser.add_argument("--agent", required=True, help="Name of agent to reset")
-    reset_parser.add_argument("--target", dest="source_agent", help="Copy prompt from another agent")
+    reset_parser.add_argument(
+        "--target", dest="source_agent", help="Copy prompt from another agent"
+    )
 
     # Default interactive mode
     parser.add_argument(
@@ -97,10 +100,16 @@ async def simple_cli(agent, assistant_id: str | None, session_state):
     console.print()
 
     if tavily_client is None:
-        console.print(f"[yellow]⚠ Web search disabled:[/yellow] TAVILY_API_KEY not found.", style=COLORS["dim"])
-        console.print(f"  To enable web search, set your Tavily API key:", style=COLORS["dim"])
-        console.print(f"    export TAVILY_API_KEY=your_api_key_here", style=COLORS["dim"])
-        console.print(f"  Or add it to your .env file. Get your key at: https://tavily.com", style=COLORS["dim"])
+        console.print(
+            "[yellow]⚠ Web search disabled:[/yellow] TAVILY_API_KEY not found.",
+            style=COLORS["dim"],
+        )
+        console.print("  To enable web search, set your Tavily API key:", style=COLORS["dim"])
+        console.print("    export TAVILY_API_KEY=your_api_key_here", style=COLORS["dim"])
+        console.print(
+            "  Or add it to your .env file. Get your key at: https://tavily.com",
+            style=COLORS["dim"],
+        )
         console.print()
 
     console.print("... Ready to code! What would you like to build?", style=COLORS["agent"])
@@ -113,7 +122,10 @@ async def simple_cli(agent, assistant_id: str | None, session_state):
         )
         console.print()
 
-    console.print(f"  Tips: Enter to submit, Alt+Enter for newline, Ctrl+E for editor, Ctrl+T to toggle auto-approve, Ctrl+C to interrupt", style=f"dim {COLORS['dim']}")
+    console.print(
+        "  Tips: Enter to submit, Alt+Enter for newline, Ctrl+E for editor, Ctrl+T to toggle auto-approve, Ctrl+C to interrupt",
+        style=f"dim {COLORS['dim']}",
+    )
     console.print()
 
     # Create prompt session and token tracker
@@ -128,30 +140,30 @@ async def simple_cli(agent, assistant_id: str | None, session_state):
             break
         except KeyboardInterrupt:
             # Ctrl+C at prompt - exit the program
-            console.print(f"\n\nGoodbye!", style=COLORS["primary"])
+            console.print("\n\nGoodbye!", style=COLORS["primary"])
             break
 
         if not user_input:
             continue
 
         # Check for slash commands first
-        if user_input.startswith('/'):
+        if user_input.startswith("/"):
             result = handle_command(user_input, agent, token_tracker)
-            if result == 'exit':
-                console.print(f"\nGoodbye!", style=COLORS["primary"])
+            if result == "exit":
+                console.print("\nGoodbye!", style=COLORS["primary"])
                 break
-            elif result:
+            if result:
                 # Command was handled, continue to next input
                 continue
 
         # Check for bash commands (!)
-        if user_input.startswith('!'):
+        if user_input.startswith("!"):
             execute_bash_command(user_input)
             continue
 
         # Handle regular quit keywords
         if user_input.lower() in ["quit", "exit", "q"]:
-            console.print(f"\nGoodbye!", style=COLORS["primary"])
+            console.print("\nGoodbye!", style=COLORS["primary"])
             break
 
         execute_task(user_input, agent, assistant_id, session_state, token_tracker)
@@ -159,7 +171,6 @@ async def simple_cli(agent, assistant_id: str | None, session_state):
 
 async def main(assistant_id: str, session_state):
     """Main entry point."""
-
     # Create the model (checks API keys)
     model = create_model()
 

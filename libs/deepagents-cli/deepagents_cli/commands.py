@@ -1,21 +1,22 @@
 """Command handlers for slash commands and bash execution."""
+
 import subprocess
 from pathlib import Path
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from .config import console, COLORS, DEEP_AGENTS_ASCII
-from .ui import show_interactive_help, TokenTracker
+from .config import COLORS, DEEP_AGENTS_ASCII, console
+from .ui import TokenTracker, show_interactive_help
 
 
 def handle_command(command: str, agent, token_tracker: TokenTracker) -> str | bool:
     """Handle slash commands. Returns 'exit' to exit, True if handled, False to pass to agent."""
-    cmd = command.lower().strip().lstrip('/')
+    cmd = command.lower().strip().lstrip("/")
 
-    if cmd in ['quit', 'exit', 'q']:
-        return 'exit'
+    if cmd in ["quit", "exit", "q"]:
+        return "exit"
 
-    elif cmd == 'clear':
+    if cmd == "clear":
         # Reset agent conversation state
         agent.checkpointer = InMemorySaver()
 
@@ -23,31 +24,32 @@ def handle_command(command: str, agent, token_tracker: TokenTracker) -> str | bo
         console.clear()
         console.print(DEEP_AGENTS_ASCII, style=f"bold {COLORS['primary']}")
         console.print()
-        console.print("... Fresh start! Screen cleared and conversation reset.", style=COLORS["agent"])
+        console.print(
+            "... Fresh start! Screen cleared and conversation reset.", style=COLORS["agent"]
+        )
         console.print()
         return True
 
-    elif cmd == 'help':
+    if cmd == "help":
         show_interactive_help()
         return True
 
-    elif cmd == 'tokens':
+    if cmd == "tokens":
         token_tracker.display_session()
         return True
 
-    else:
-        console.print()
-        console.print(f"[yellow]Unknown command: /{cmd}[/yellow]")
-        console.print(f"[dim]Type /help for available commands.[/dim]")
-        console.print()
-        return True
+    console.print()
+    console.print(f"[yellow]Unknown command: /{cmd}[/yellow]")
+    console.print("[dim]Type /help for available commands.[/dim]")
+    console.print()
+    return True
 
     return False
 
 
 def execute_bash_command(command: str) -> bool:
     """Execute a bash command and display output. Returns True if handled."""
-    cmd = command.strip().lstrip('!')
+    cmd = command.strip().lstrip("!")
 
     if not cmd:
         return True
@@ -58,12 +60,7 @@ def execute_bash_command(command: str) -> bool:
 
         # Execute the command
         result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=Path.cwd()
+            cmd, check=False, shell=True, capture_output=True, text=True, timeout=30, cwd=Path.cwd()
         )
 
         # Display output

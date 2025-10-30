@@ -1,28 +1,29 @@
 """Task execution and streaming logic for the CLI."""
-import sys
-import tty
-import termios
-import json
-import threading
 
-from langchain_core.messages import ToolMessage, HumanMessage
+import json
+import sys
+import termios
+import threading
+import tty
+
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 from rich import box
-from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.panel import Panel
 
-from .config import console, COLORS
+from .config import COLORS, console
 from .file_ops import FileOpTracker, build_approval_preview
+from .input import parse_file_mentions
 from .ui import (
-    render_todo_list,
-    format_tool_message_content,
     TokenTracker,
     format_tool_display,
-    render_summary_panel,
-    render_file_operation,
+    format_tool_message_content,
     render_diff_block,
+    render_file_operation,
+    render_summary_panel,
+    render_todo_list,
 )
-from .input import parse_file_mentions
 
 
 def is_summary_message(content: str) -> bool:
@@ -32,11 +33,11 @@ def is_summary_message(content: str) -> bool:
     content_lower = content.lower()
     # Common patterns from SummarizationMiddleware
     return (
-        "conversation summary" in content_lower or
-        "previous conversation" in content_lower or
-        content.startswith("Summary:") or
-        content.startswith("Conversation summary:") or
-        "summarized the conversation" in content_lower
+        "conversation summary" in content_lower
+        or "previous conversation" in content_lower
+        or content.startswith("Summary:")
+        or content.startswith("Conversation summary:")
+        or "summarized the conversation" in content_lower
     )
 
 
@@ -54,7 +55,7 @@ def _extract_tool_args(action_request: dict) -> dict | None:
 
 def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> dict:
     """Prompt user to approve/reject a tool action with arrow key navigation."""
-    description = action_request.get('description', 'No description available')
+    description = action_request.get("description", "No description available")
     tool_name = action_request.get("name") or action_request.get("tool")
     tool_args = _extract_tool_args(action_request)
     preview = build_approval_preview(tool_name, tool_args, assistant_id) if tool_name else None
@@ -73,13 +74,15 @@ def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> 
 
     # Display action info first
     console.print()
-    console.print(Panel(
-        "[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
-        + "\n".join(body_lines),
-        border_style="yellow",
-        box=box.ROUNDED,
-        padding=(0, 1)
-    ))
+    console.print(
+        Panel(
+            "[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
+            + "\n".join(body_lines),
+            border_style="yellow",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
     if preview and preview.diff and not preview.error:
         console.print()
         render_diff_block(preview.diff, preview.diff_title or preview.title)
@@ -101,55 +104,54 @@ def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> 
             while True:
                 if not first_render:
                     # Move cursor back to start of menu (up 2 lines, then to start of line)
-                    sys.stdout.write('\033[2A\r')
+                    sys.stdout.write("\033[2A\r")
 
                 first_render = False
 
                 # Display options vertically with ANSI color codes
                 for i, option in enumerate(options):
-                    sys.stdout.write('\r\033[K')  # Clear line from cursor to end
+                    sys.stdout.write("\r\033[K")  # Clear line from cursor to end
 
                     if i == selected:
                         if option == "approve":
                             # Green bold with filled checkbox
-                            sys.stdout.write('\033[1;32m☑ Approve\033[0m\n')
+                            sys.stdout.write("\033[1;32m☑ Approve\033[0m\n")
                         else:
                             # Red bold with filled checkbox
-                            sys.stdout.write('\033[1;31m☑ Reject\033[0m\n')
+                            sys.stdout.write("\033[1;31m☑ Reject\033[0m\n")
+                    elif option == "approve":
+                        # Dim with empty checkbox
+                        sys.stdout.write("\033[2m☐ Approve\033[0m\n")
                     else:
-                        if option == "approve":
-                            # Dim with empty checkbox
-                            sys.stdout.write('\033[2m☐ Approve\033[0m\n')
-                        else:
-                            # Dim with empty checkbox
-                            sys.stdout.write('\033[2m☐ Reject\033[0m\n')
+                        # Dim with empty checkbox
+                        sys.stdout.write("\033[2m☐ Reject\033[0m\n")
 
                 sys.stdout.flush()
 
                 # Read key
                 char = sys.stdin.read(1)
 
-                if char == '\x1b':  # ESC sequence (arrow keys)
+                if char == "\x1b":  # ESC sequence (arrow keys)
                     next1 = sys.stdin.read(1)
                     next2 = sys.stdin.read(1)
-                    if next1 == '[':
-                        if next2 == 'B':  # Down arrow
+                    if next1 == "[":
+                        if next2 == "B":  # Down arrow
                             selected = (selected + 1) % len(options)
-                        elif next2 == 'A':  # Up arrow
+                        elif next2 == "A":  # Up arrow
                             selected = (selected - 1) % len(options)
-                elif char == '\r' or char == '\n':  # Enter
-                    sys.stdout.write('\033[1B\n')  # Move down past the menu
+                elif char == "\r" or char == "\n":  # Enter
+                    sys.stdout.write("\033[1B\n")  # Move down past the menu
                     break
-                elif char == '\x03':  # Ctrl+C
-                    sys.stdout.write('\033[1B\n')  # Move down past the menu
-                    raise KeyboardInterrupt()
-                elif char.lower() == 'a':
+                elif char == "\x03":  # Ctrl+C
+                    sys.stdout.write("\033[1B\n")  # Move down past the menu
+                    raise KeyboardInterrupt
+                elif char.lower() == "a":
                     selected = 0
-                    sys.stdout.write('\033[1B\n')  # Move down past the menu
+                    sys.stdout.write("\033[1B\n")  # Move down past the menu
                     break
-                elif char.lower() == 'r':
+                elif char.lower() == "r":
                     selected = 1
-                    sys.stdout.write('\033[1B\n')  # Move down past the menu
+                    sys.stdout.write("\033[1B\n")  # Move down past the menu
                     break
 
         finally:
@@ -160,7 +162,7 @@ def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> 
         console.print("  ☐ (A)pprove  (default)")
         console.print("  ☐ (R)eject")
         choice = input("\nChoice (A/R, default=Approve): ").strip().lower()
-        if choice == 'r' or choice == 'reject':
+        if choice == "r" or choice == "reject":
             selected = 1
         else:
             selected = 0
@@ -170,11 +172,16 @@ def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> 
     # Return decision based on selection
     if selected == 0:
         return {"type": "approve"}
-    else:
-        return {"type": "reject", "message": "User rejected the command"}
+    return {"type": "reject", "message": "User rejected the command"}
 
 
-def execute_task(user_input: str, agent, assistant_id: str | None, session_state, token_tracker: TokenTracker | None = None):
+def execute_task(
+    user_input: str,
+    agent,
+    assistant_id: str | None,
+    session_state,
+    token_tracker: TokenTracker | None = None,
+):
     """Execute any task by passing it directly to the AI agent."""
     console.print()
 
@@ -189,7 +196,9 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                 # Limit file content to reasonable size
                 if len(content) > 50000:
                     content = content[:50000] + "\n... (file truncated)"
-                context_parts.append(f"\n### {file_path.name}\nPath: `{file_path}`\n```\n{content}\n```")
+                context_parts.append(
+                    f"\n### {file_path.name}\nPath: `{file_path}`\n```\n{content}\n```"
+                )
             except Exception as e:
                 context_parts.append(f"\n### {file_path.name}\n[Error reading file: {e}]")
 
@@ -199,7 +208,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
 
     config = {
         "configurable": {"thread_id": "main"},
-        "metadata": {"assistant_id": assistant_id} if assistant_id else {}
+        "metadata": {"assistant_id": assistant_id} if assistant_id else {},
     }
 
     has_responded = False
@@ -302,8 +311,16 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                     if "__interrupt__" in data:
                         interrupt_data = data["__interrupt__"]
                         if interrupt_data:
-                            interrupt_obj = interrupt_data[0] if isinstance(interrupt_data, tuple) else interrupt_data
-                            hitl_request = interrupt_obj.value if hasattr(interrupt_obj, 'value') else interrupt_obj
+                            interrupt_obj = (
+                                interrupt_data[0]
+                                if isinstance(interrupt_data, tuple)
+                                else interrupt_data
+                            )
+                            hitl_request = (
+                                interrupt_obj.value
+                                if hasattr(interrupt_obj, "value")
+                                else interrupt_obj
+                            )
 
                             # Check if auto-approve is enabled
                             if session_state.auto_approve:
@@ -315,7 +332,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                         status.stop()
                                         spinner_active = False
 
-                                    description = action_request.get('description', 'tool action')
+                                    description = action_request.get("description", "tool action")
                                     console.print()
                                     console.print(f"  [dim]⚡ {description}[/dim]")
 
@@ -330,22 +347,25 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                     spinner_active = True
 
                                 break
-                            else:
-                                # Normal HITL flow - stop spinner and prompt user
-                                if spinner_active:
-                                    status.stop()
-                                    spinner_active = False
+                            # Normal HITL flow - stop spinner and prompt user
+                            if spinner_active:
+                                status.stop()
+                                spinner_active = False
 
-                                # Handle human-in-the-loop approval
-                                decisions = []
-                                for action_request in hitl_request.get("action_requests", []):
-                                    decision = prompt_for_tool_approval(action_request, assistant_id)
-                                    decisions.append(decision)
+                            # Handle human-in-the-loop approval
+                            decisions = []
+                            for action_request in hitl_request.get("action_requests", []):
+                                decision = prompt_for_tool_approval(
+                                    action_request, assistant_id
+                                )
+                                decisions.append(decision)
 
-                                suppress_resumed_output = any(decision.get("type") == "reject" for decision in decisions)
-                                hitl_response = {"decisions": decisions}
-                                interrupt_occurred = True
-                                break
+                            suppress_resumed_output = any(
+                                decision.get("type") == "reject" for decision in decisions
+                            )
+                            hitl_response = {"decisions": decisions}
+                            interrupt_occurred = True
+                            break
 
                     # Extract chunk_data from updates for todo checking
                     chunk_data = list(data.values())[0] if data else None
@@ -368,7 +388,6 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                     # Messages stream returns (message, metadata) tuples
                     if not isinstance(data, tuple) or len(data) != 2:
                         continue
-
 
                     message, metadata = data
 
@@ -420,16 +439,16 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                         continue
 
                     # Check if this is an AIMessageChunk
-                    if not hasattr(message, 'content_blocks'):
+                    if not hasattr(message, "content_blocks"):
                         # Fallback for messages without content_blocks
                         continue
 
                     # Extract token usage if available
-                    if token_tracker and hasattr(message, 'usage_metadata'):
+                    if token_tracker and hasattr(message, "usage_metadata"):
                         usage = message.usage_metadata
                         if usage:
-                            input_toks = usage.get('input_tokens', 0)
-                            output_toks = usage.get('output_tokens', 0)
+                            input_toks = usage.get("input_tokens", 0)
+                            output_toks = usage.get("output_tokens", 0)
                             if input_toks or output_toks:
                                 captured_input_tokens = max(captured_input_tokens, input_toks)
                                 captured_output_tokens = max(captured_output_tokens, output_toks)
@@ -446,7 +465,9 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                     summary_buffer += text
                                     continue
 
-                                if is_summary_message(text) or is_summary_message(pending_text + text):
+                                if is_summary_message(text) or is_summary_message(
+                                    pending_text + text
+                                ):
                                     if pending_text:
                                         summary_buffer += pending_text
                                         pending_text = ""
@@ -544,7 +565,11 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                 console.print()
 
                             display_str = format_tool_display(buffer_name, parsed_args)
-                            console.print(f"  {icon} {display_str}", style=f"dim {COLORS['tool']}", markup=False)
+                            console.print(
+                                f"  {icon} {display_str}",
+                                style=f"dim {COLORS['tool']}",
+                                markup=False,
+                            )
 
                             if not spinner_active:
                                 status.start()
@@ -595,8 +620,12 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                 agent.update_state(
                     config=config,
                     values={
-                        "messages": [HumanMessage(content="[User interrupted the previous request with Ctrl+C]")]
-                    }
+                        "messages": [
+                            HumanMessage(
+                                content="[User interrupted the previous request with Ctrl+C]"
+                            )
+                        ]
+                    },
                 )
             except Exception:
                 pass
