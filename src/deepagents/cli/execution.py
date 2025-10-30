@@ -7,12 +7,28 @@ import threading
 
 from langchain_core.messages import ToolMessage, HumanMessage
 from langgraph.types import Command
-from rich.panel import Panel
 from rich import box
+from rich.panel import Panel
+from rich.markdown import Markdown
 
 from .config import console, COLORS
-from .ui import render_todo_list, format_tool_message_content, TokenTracker
+from .ui import render_todo_list, format_tool_message_content, TokenTracker, format_tool_display, render_summary_panel
 from .input import parse_file_mentions
+
+
+def is_summary_message(content: str) -> bool:
+    """Detect if a message is from SummarizationMiddleware."""
+    if not isinstance(content, str):
+        return False
+    content_lower = content.lower()
+    # Common patterns from SummarizationMiddleware
+    return (
+        "conversation summary" in content_lower or
+        "previous conversation" in content_lower or
+        content.startswith("Summary:") or
+        content.startswith("Conversation summary:") or
+        "summarized the conversation" in content_lower
+    )
 
 
 def prompt_for_shell_approval(action_request: dict) -> dict:
@@ -168,6 +184,50 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
         "write_todos": "📋",
     }
 
+    # Track which tool calls we've displayed to avoid duplicates
+    displayed_tool_ids = set()
+    # Buffer partial tool-call chunks keyed by streaming index
+    tool_call_buffers: dict[str | int, dict] = {}
+    # Buffer assistant text so we can render complete markdown segments
+    pending_text = ""
+    # Track if we're buffering a summary message
+    summary_mode = False
+    summary_buffer = ""
+
+    def flush_text_buffer(*, final: bool = False) -> None:
+        """Flush accumulated assistant text as rendered markdown when appropriate."""
+        nonlocal pending_text, spinner_active, has_responded
+        if not final or not pending_text.strip():
+            return
+        if spinner_active:
+            status.stop()
+            spinner_active = False
+        if not has_responded:
+            console.print("●", style=COLORS["agent"], markup=False)
+            has_responded = True
+        markdown = Markdown(pending_text.rstrip())
+        console.print(markdown, style=COLORS["agent"])
+        pending_text = ""
+
+    def flush_summary_buffer() -> None:
+        """Render any buffered summary panel output."""
+        nonlocal summary_mode, summary_buffer, spinner_active, has_responded
+        if not summary_mode or not summary_buffer.strip():
+            summary_mode = False
+            summary_buffer = ""
+            return
+        if spinner_active:
+            status.stop()
+            spinner_active = False
+        if not has_responded:
+            console.print("●", style=COLORS["agent"], markup=False)
+            has_responded = True
+        console.print()
+        render_summary_panel(summary_buffer.strip())
+        console.print()
+        summary_mode = False
+        summary_buffer = ""
+
     # Stream input - may need to loop if there are interrupts
     stream_input = {"messages": [{"role": "user", "content": final_input}]}
 
@@ -274,10 +334,23 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                         # Exception: show shell command errors to help with debugging
                         tool_name = getattr(message, "name", "")
                         tool_status = getattr(message, "status", "success")
+                        tool_content = format_tool_message_content(message.content)
 
                         if tool_name == "shell" and tool_status != "success":
-                            tool_content = format_tool_message_content(message.content)
+                            flush_summary_buffer()
+                            flush_text_buffer(final=True)
                             if tool_content:
+                                if spinner_active:
+                                    status.stop()
+                                    spinner_active = False
+                                console.print()
+                                console.print(tool_content, style="red", markup=False)
+                                console.print()
+                        elif tool_content and isinstance(tool_content, str):
+                            stripped = tool_content.lstrip()
+                            if stripped.lower().startswith("error"):
+                                flush_summary_buffer()
+                                flush_text_buffer(final=True)
                                 if spinner_active:
                                     status.stop()
                                     spinner_active = False
@@ -312,19 +385,24 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                         if block_type == "text":
                             text = block.get("text", "")
                             if text:
-                                if spinner_active:
-                                    status.stop()
-                                    spinner_active = False
+                                if summary_mode:
+                                    summary_buffer += text
+                                    continue
 
-                                if not has_responded:
-                                    console.print("● ", style=COLORS["agent"], end="", markup=False)
-                                    has_responded = True
+                                if is_summary_message(text) or is_summary_message(pending_text + text):
+                                    if pending_text:
+                                        summary_buffer += pending_text
+                                        pending_text = ""
+                                    summary_mode = True
+                                    summary_buffer += text
+                                    continue
 
-                                # Print the text chunk directly (no cumulative diffing needed)
-                                console.print(text, style=COLORS["agent"], end="", markup=False)
+                                pending_text += text
 
                         # Handle reasoning blocks
                         elif block_type == "reasoning":
+                            flush_summary_buffer()
+                            flush_text_buffer(final=True)
                             reasoning = block.get("reasoning", "")
                             if reasoning:
                                 if spinner_active:
@@ -335,40 +413,92 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
 
                         # Handle tool call chunks
                         elif block_type == "tool_call_chunk":
-                            tool_name = block.get("name")
-                            tool_args = block.get("args", "")
-                            tool_id = block.get("id")
+                            chunk_name = block.get("name")
+                            chunk_args = block.get("args")
+                            chunk_id = block.get("id")
+                            chunk_index = block.get("index")
 
-                            # Only display when we have a complete tool call (name is present)
-                            if tool_name:
-                                icon = tool_icons.get(tool_name, "🔧")
+                            # Use index as stable buffer key; fall back to id if needed
+                            buffer_key: str | int
+                            if chunk_index is not None:
+                                buffer_key = chunk_index
+                            elif chunk_id is not None:
+                                buffer_key = chunk_id
+                            else:
+                                buffer_key = f"unknown-{len(tool_call_buffers)}"
 
-                                if spinner_active:
-                                    status.stop()
+                            buffer = tool_call_buffers.setdefault(
+                                buffer_key,
+                                {"name": None, "id": None, "args": None, "args_parts": []},
+                            )
 
-                                # Display tool call
-                                if has_responded:
-                                    console.print()  # New line after text
+                            if chunk_name:
+                                buffer["name"] = chunk_name
+                            if chunk_id:
+                                buffer["id"] = chunk_id
 
-                                # Try to parse args if it's a string
+                            if isinstance(chunk_args, dict):
+                                buffer["args"] = chunk_args
+                                buffer["args_parts"] = []
+                            elif isinstance(chunk_args, str):
+                                if chunk_args:
+                                    parts: list[str] = buffer.setdefault("args_parts", [])
+                                    if not parts or chunk_args != parts[-1]:
+                                        parts.append(chunk_args)
+                                    buffer["args"] = "".join(parts)
+                            elif chunk_args is not None:
+                                buffer["args"] = chunk_args
+
+                            buffer_name = buffer.get("name")
+                            buffer_id = buffer.get("id")
+                            if buffer_name is None:
+                                continue
+                            if buffer_id is not None and buffer_id in displayed_tool_ids:
+                                continue
+
+                            parsed_args = buffer.get("args")
+                            if isinstance(parsed_args, str):
+                                if not parsed_args:
+                                    continue
                                 try:
-                                    if isinstance(tool_args, str) and tool_args:
-                                        parsed_args = json.loads(tool_args)
-                                        args_str = ", ".join(
-                                            f"{k}={truncate_value(str(v), 50)}"
-                                            for k, v in parsed_args.items()
-                                        )
-                                    else:
-                                        args_str = str(tool_args)
-                                except:
-                                    args_str = str(tool_args)
+                                    parsed_args = json.loads(parsed_args)
+                                except json.JSONDecodeError:
+                                    # Wait for more chunks to form valid JSON
+                                    continue
+                            elif parsed_args is None:
+                                continue
 
-                                console.print(f"  {icon} {tool_name}({args_str})", style=f"dim {COLORS['tool']}", markup=False)
+                            # Ensure args are in dict form for formatter
+                            if not isinstance(parsed_args, dict):
+                                parsed_args = {"value": parsed_args}
 
-                                if spinner_active:
-                                    status.start()
+                            flush_summary_buffer()
+                            flush_text_buffer(final=True)
+                            if buffer_id is not None:
+                                displayed_tool_ids.add(buffer_id)
+                            tool_call_buffers.pop(buffer_key, None)
+                            icon = tool_icons.get(buffer_name, "🔧")
+
+                            if spinner_active:
+                                status.stop()
+
+                            if has_responded:
+                                console.print()
+
+                            display_str = format_tool_display(buffer_name, parsed_args)
+                            console.print(f"  {icon} {display_str}", style=f"dim {COLORS['tool']}", markup=False)
+
+                            if not spinner_active:
+                                status.start()
+                                spinner_active = True
+
+                    if getattr(message, "chunk_position", None) == "last":
+                        flush_summary_buffer()
+                        flush_text_buffer(final=True)
 
             # After streaming loop - handle interrupt if it occurred
+            flush_summary_buffer()
+            flush_text_buffer(final=True)
             if interrupt_occurred and hitl_response:
                 if suppress_resumed_output:
                     if spinner_active:
@@ -422,13 +552,8 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
     if has_responded:
         console.print()
 
-        # Display token usage if available
+        # Track token usage (display only via /tokens command)
         if token_tracker and (captured_input_tokens or captured_output_tokens):
             token_tracker.add(captured_input_tokens, captured_output_tokens)
-            token_tracker.display_last()
 
         console.print()
-
-
-# Import truncate_value for use in tool arg formatting
-from .ui import truncate_value

@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.completion import Completer, PathCompleter, WordCompleter, merge_completers, Completion
 from prompt_toolkit.document import Document
@@ -217,10 +216,6 @@ def create_prompt_session(assistant_id: str, session_state: SessionState) -> Pro
         """Open the current input in an external editor (nano by default)."""
         event.current_buffer.open_in_editor()
 
-    # Create history file path
-    history_file = Path.home() / ".deepagents" / assistant_id / "history"
-    history_file.parent.mkdir(parents=True, exist_ok=True)
-
     from prompt_toolkit.styles import Style
 
     # Define styles for the toolbar with full-width background colors
@@ -234,7 +229,6 @@ def create_prompt_session(assistant_id: str, session_state: SessionState) -> Pro
     session = PromptSession(
         message=HTML(f'<style fg="{COLORS["user"]}">></style> '),
         multiline=True,  # Keep multiline support but Enter submits
-        history=FileHistory(str(history_file)),
         key_bindings=kb,
         completer=merge_completers([CommandCompleter(), BashCompleter(), FilePathCompleter()]),
         editing_mode=EditingMode.EMACS,

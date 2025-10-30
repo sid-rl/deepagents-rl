@@ -16,6 +16,131 @@ def truncate_value(value: str, max_length: int = MAX_ARG_LENGTH) -> str:
     return value
 
 
+def format_tool_display(tool_name: str, tool_args: dict) -> str:
+    """Format tool calls for display with tool-specific smart formatting.
+
+    Shows the most relevant information for each tool type rather than all arguments.
+
+    Args:
+        tool_name: Name of the tool being called
+        tool_args: Dictionary of tool arguments
+
+    Returns:
+        Formatted string for display (e.g., "read_file(config.py)")
+
+    Examples:
+        read_file(path="/long/path/file.py") → "read_file(file.py)"
+        web_search(query="how to code", max_results=5) → 'web_search("how to code")'
+        shell(command="pip install foo") → 'shell("pip install foo")'
+    """
+    def abbreviate_path(path_str: str, max_length: int = 60) -> str:
+        """Abbreviate a file path intelligently - show basename or relative path."""
+        try:
+            path = Path(path_str)
+
+            # If it's just a filename (no directory parts), return as-is
+            if len(path.parts) == 1:
+                return path_str
+
+            # Try to get relative path from current working directory
+            try:
+                rel_path = path.relative_to(Path.cwd())
+                rel_str = str(rel_path)
+                # Use relative if it's shorter and not too long
+                if len(rel_str) < len(path_str) and len(rel_str) <= max_length:
+                    return rel_str
+            except (ValueError, Exception):
+                pass
+
+            # If absolute path is reasonable length, use it
+            if len(path_str) <= max_length:
+                return path_str
+
+            # Otherwise, just show basename (filename only)
+            return path.name
+        except Exception:
+            # Fallback to original string if any error
+            return truncate_value(path_str, max_length)
+
+    # Tool-specific formatting - show the most important argument(s)
+    if tool_name in ("read_file", "write_file", "edit_file"):
+        # File operations: show the primary file path argument (file_path or path)
+        path_value = tool_args.get("file_path")
+        if path_value is None:
+            path_value = tool_args.get("path")
+        if path_value is not None:
+            path = abbreviate_path(str(path_value))
+            return f"{tool_name}({path})"
+
+    elif tool_name == "web_search":
+        # Web search: show the query string
+        if "query" in tool_args:
+            query = str(tool_args["query"])
+            query = truncate_value(query, 100)
+            return f'{tool_name}("{query}")'
+
+    elif tool_name == "grep":
+        # Grep: show the search pattern
+        if "pattern" in tool_args:
+            pattern = str(tool_args["pattern"])
+            pattern = truncate_value(pattern, 70)
+            return f'{tool_name}("{pattern}")'
+
+    elif tool_name == "shell":
+        # Shell: show the command being executed
+        if "command" in tool_args:
+            command = str(tool_args["command"])
+            command = truncate_value(command, 120)
+            return f'{tool_name}("{command}")'
+
+    elif tool_name == "ls":
+        # ls: show directory, or empty if current directory
+        if "path" in tool_args and tool_args["path"]:
+            path = abbreviate_path(str(tool_args["path"]))
+            return f"{tool_name}({path})"
+        return f"{tool_name}()"
+
+    elif tool_name == "glob":
+        # Glob: show the pattern
+        if "pattern" in tool_args:
+            pattern = str(tool_args["pattern"])
+            pattern = truncate_value(pattern, 80)
+            return f'{tool_name}("{pattern}")'
+
+    elif tool_name == "http_request":
+        # HTTP: show method and URL
+        parts = []
+        if "method" in tool_args:
+            parts.append(str(tool_args["method"]).upper())
+        if "url" in tool_args:
+            url = str(tool_args["url"])
+            url = truncate_value(url, 80)
+            parts.append(url)
+        if parts:
+            return f'{tool_name}({" ".join(parts)})'
+
+    elif tool_name == "task":
+        # Task: show the task description
+        if "description" in tool_args:
+            desc = str(tool_args["description"])
+            desc = truncate_value(desc, 100)
+            return f'{tool_name}("{desc}")'
+
+    elif tool_name == "write_todos":
+        # Todos: show count of items
+        if "todos" in tool_args and isinstance(tool_args["todos"], list):
+            count = len(tool_args["todos"])
+            return f"{tool_name}({count} items)"
+
+    # Fallback: generic formatting for unknown tools
+    # Show all arguments in key=value format
+    args_str = ", ".join(
+        f"{k}={truncate_value(str(v), 50)}"
+        for k, v in tool_args.items()
+    )
+    return f"{tool_name}({args_str})"
+
+
 def format_tool_message_content(content: Any) -> str:
     """Convert ToolMessage content into a printable string."""
     if content is None:
@@ -38,32 +163,28 @@ class TokenTracker:
     """Track token usage across the conversation."""
 
     def __init__(self):
-        self.session_input = 0
-        self.session_output = 0
-        self.last_input = 0
+        self.current_context = 0
         self.last_output = 0
 
     def add(self, input_tokens: int, output_tokens: int):
         """Add tokens from a response."""
-        self.session_input += input_tokens
-        self.session_output += output_tokens
-        self.last_input = input_tokens
+        # input_tokens IS the current context size (what was sent to the model)
+        self.current_context = input_tokens
         self.last_output = output_tokens
 
     def display_last(self):
-        """Display tokens for the last response."""
-        # Only show output tokens generated in this turn
-        if self.last_output:
-            if self.last_output >= 1000:
-                console.print(f"  {self.last_output:,} tokens", style="dim")
+        """Display current context size after this turn."""
+        if self.last_output and self.last_output >= 1000:
+            console.print(f"  Generated: {self.last_output:,} tokens", style="dim")
+        if self.current_context:
+            console.print(f"  Current context: {self.current_context:,} tokens", style="dim")
 
     def display_session(self):
-        """Display cumulative session tokens."""
-        total = self.session_input + self.session_output
-        console.print(f"\n[bold]Session Token Usage:[/bold]", style=COLORS["primary"])
-        console.print(f"  Input:  {self.session_input:,} tokens", style=COLORS["dim"])
-        console.print(f"  Output: {self.session_output:,} tokens", style=COLORS["dim"])
-        console.print(f"  Total:  {total:,} tokens\n", style=COLORS["dim"])
+        """Display current context size."""
+        if self.current_context:
+            console.print(f"\n[bold]Token Usage:[/bold]", style=COLORS["primary"])
+            console.print(f"  Current context: {self.current_context:,} tokens", style=COLORS["dim"])
+            console.print()
 
 
 def render_todo_list(todos: list[dict]) -> None:
@@ -98,6 +219,29 @@ def render_todo_list(todos: list[dict]) -> None:
     console.print(panel)
 
 
+def render_summary_panel(summary_content: str) -> None:
+    """Render conversation summary as a collapsible panel."""
+    # Extract just the summary text, removing any metadata
+    summary_text = summary_content.strip()
+
+    # Truncate if very long
+    if len(summary_text) > 500:
+        preview = summary_text[:500] + "..."
+    else:
+        preview = summary_text
+
+    panel = Panel(
+        f"[dim]Context exceeded threshold. Conversation history summarized to preserve context.[/dim]\n\n"
+        f"[yellow]Summary:[/yellow]\n{preview}\n\n"
+        f"[dim]Recent messages kept in full. Continuing with reduced context...[/dim]",
+        title="[bold yellow]⚠ Context Summarized[/bold yellow]",
+        border_style="yellow",
+        box=box.ROUNDED,
+        padding=(1, 2)
+    )
+    console.print(panel)
+
+
 def show_interactive_help():
     """Show available commands during interactive session."""
     console.print()
@@ -113,7 +257,7 @@ def show_interactive_help():
     console.print("  Alt+Enter       Insert newline (Option+Enter on Mac, or ESC then Enter)", style=COLORS["dim"])
     console.print("  Ctrl+E          Open in external editor (nano by default)", style=COLORS["dim"])
     console.print("  Ctrl+T          Toggle auto-approve mode", style=COLORS["dim"])
-    console.print("  Arrow keys      Navigate input and history", style=COLORS["dim"])
+    console.print("  Arrow keys      Navigate input", style=COLORS["dim"])
     console.print("  Ctrl+C          Cancel input or interrupt agent mid-work", style=COLORS["dim"])
     console.print()
     console.print("[bold]Special Features:[/bold]", style=COLORS["primary"])
@@ -169,7 +313,7 @@ def show_help():
     console.print("  Alt+Enter       Insert newline for multi-line (Option+Enter or ESC then Enter)", style=COLORS["dim"])
     console.print("  Ctrl+J          Insert newline (alternative)", style=COLORS["dim"])
     console.print("  Ctrl+T          Toggle auto-approve mode", style=COLORS["dim"])
-    console.print("  Arrow keys      Navigate input and command history", style=COLORS["dim"])
+    console.print("  Arrow keys      Navigate input", style=COLORS["dim"])
     console.print("  @filename       Type @ to auto-complete files and inject content", style=COLORS["dim"])
     console.print("  /command        Type / to see available commands (auto-completes)", style=COLORS["dim"])
     console.print()

@@ -102,6 +102,17 @@ def create_agent_with_config(model, assistant_id: str, tools: list):
 
 The filesystem backend is currently operating in: `{Path.cwd()}`
 
+### Memory System Reminder
+
+Your long-term memory is stored in /memories/ and persists across sessions.
+
+**IMPORTANT - Check memories before answering:**
+- When asked "what do you know about X?" → Run `ls /memories/` FIRST, then read relevant files
+- When starting a task → Check if you have guides or examples in /memories/
+- At the beginning of new sessions → Consider checking `ls /memories/` to see what context you have
+
+Base your answers on saved knowledge (from /memories/) when available, supplemented by general knowledge.
+
 ### Human-in-the-Loop Tool Approval
 
 Some tool calls require user approval before execution. When a tool call is rejected by the user:
