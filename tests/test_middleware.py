@@ -8,7 +8,7 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
-from langgraph.graph.message import add_messages
+from langgraph.types import Overwrite
 from langgraph.store.memory import InMemoryStore
 
 from deepagents.middleware.filesystem import (
@@ -168,8 +168,55 @@ class TestFilesystemMiddleware:
                 "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
             }
         )
+        # ls should only return files directly in /pokemon/, not in subdirectories
         assert "/pokemon/test2.txt" in result
         assert "/pokemon/charmander.txt" in result
+        assert "/pokemon/water/squirtle.txt" not in result  # In subdirectory, should NOT be listed
+        # ls should also list subdirectories with trailing /
+        assert "/pokemon/water/" in result
+
+    def test_ls_shortterm_lists_directories(self):
+        """Test that ls lists directories with trailing / for traversal."""
+        state = FilesystemState(
+            messages=[],
+            files={
+                "/test.txt": FileData(
+                    content=["Hello world"],
+                    modified_at="2021-01-01",
+                    created_at="2021-01-01",
+                ),
+                "/pokemon/charmander.txt": FileData(
+                    content=["Ember"],
+                    modified_at="2021-01-01",
+                    created_at="2021-01-01",
+                ),
+                "/pokemon/water/squirtle.txt": FileData(
+                    content=["Water"],
+                    modified_at="2021-01-01",
+                    created_at="2021-01-01",
+                ),
+                "/docs/readme.md": FileData(
+                    content=["Documentation"],
+                    modified_at="2021-01-01",
+                    created_at="2021-01-01",
+                ),
+            },
+        )
+        middleware = FilesystemMiddleware()
+        ls_tool = next(tool for tool in middleware.tools if tool.name == "ls")
+        result = ls_tool.invoke(
+            {
+                "path": "/",
+                "runtime": ToolRuntime(state=state, context=None, tool_call_id="", store=None, stream_writer=lambda _: None, config={}),
+            }
+        )
+        # ls should list both files and directories at root level
+        assert "/test.txt" in result
+        assert "/pokemon/" in result
+        assert "/docs/" in result
+        # But NOT subdirectory files
+        assert "/pokemon/charmander.txt" not in result
+        assert "/pokemon/water/squirtle.txt" not in result
 
     def test_glob_search_shortterm_simple_pattern(self):
         state = FilesystemState(
@@ -649,22 +696,21 @@ class TestFilesystemMiddleware:
         keys = {item.key for item in result}
         assert keys == {f"/file{i}.txt" for i in range(55)}
 
-    def test_create_file_data_splits_long_lines(self):
+    def test_create_file_data_preserves_long_lines(self):
+        """Test that create_file_data stores long lines as-is without splitting."""
         long_line = "a" * 3500
         short_line = "short line"
         content = f"{short_line}\n{long_line}"
 
         file_data = create_file_data(content)
 
-        for line in file_data["content"]:
-            assert len(line) <= 2000
-
-        assert len(file_data["content"]) == 3
+        assert len(file_data["content"]) == 2
         assert file_data["content"][0] == short_line
-        assert file_data["content"][1] == "a" * 2000
-        assert file_data["content"][2] == "a" * 1500
+        assert file_data["content"][1] == long_line
+        assert len(file_data["content"][1]) == 3500
 
-    def test_update_file_data_splits_long_lines(self):
+    def test_update_file_data_preserves_long_lines(self):
+        """Test that update_file_data stores long lines as-is without splitting."""
         initial_file_data = create_file_data("initial content")
 
         long_line = "b" * 5000
@@ -673,16 +719,217 @@ class TestFilesystemMiddleware:
 
         updated_file_data = update_file_data(initial_file_data, new_content)
 
-        for line in updated_file_data["content"]:
-            assert len(line) <= 2000
-
-        assert len(updated_file_data["content"]) == 4
+        assert len(updated_file_data["content"]) == 2
         assert updated_file_data["content"][0] == short_line
-        assert updated_file_data["content"][1] == "b" * 2000
-        assert updated_file_data["content"][2] == "b" * 2000
-        assert updated_file_data["content"][3] == "b" * 1000
+        assert updated_file_data["content"][1] == long_line
+        assert len(updated_file_data["content"][1]) == 5000
 
         assert updated_file_data["created_at"] == initial_file_data["created_at"]
+
+    def test_format_content_with_line_numbers_short_lines(self):
+        """Test that short lines (<=10000 chars) are displayed normally."""
+        from deepagents.backends.utils import format_content_with_line_numbers
+
+        content = ["short line 1", "short line 2", "short line 3"]
+        result = format_content_with_line_numbers(content, start_line=1)
+
+        lines = result.split("\n")
+        assert len(lines) == 3
+        assert "     1\tshort line 1" in lines[0]
+        assert "     2\tshort line 2" in lines[1]
+        assert "     3\tshort line 3" in lines[2]
+
+    def test_format_content_with_line_numbers_long_line_with_continuation(self):
+        """Test that long lines (>10000 chars) are split with continuation markers."""
+        from deepagents.backends.utils import format_content_with_line_numbers
+
+        long_line = "a" * 25000
+        content = ["short line", long_line, "another short line"]
+        result = format_content_with_line_numbers(content, start_line=1)
+
+        lines = result.split("\n")
+        assert len(lines) == 5
+        assert "     1\tshort line" in lines[0]
+        assert "     2\t" in lines[1]
+        assert lines[1].count("a") == 10000
+        assert "   2.1\t" in lines[2]
+        assert lines[2].count("a") == 10000
+        assert "   2.2\t" in lines[3]
+        assert lines[3].count("a") == 5000
+        assert "     3\tanother short line" in lines[4]
+
+    def test_format_content_with_line_numbers_multiple_long_lines(self):
+        """Test multiple long lines in sequence with proper line numbering."""
+        from deepagents.backends.utils import format_content_with_line_numbers
+
+        long_line_1 = "x" * 15000
+        long_line_2 = "y" * 15000
+        content = [long_line_1, "middle", long_line_2]
+        result = format_content_with_line_numbers(content, start_line=5)
+        lines = result.split("\n")
+        assert len(lines) == 5
+        assert "     5\t" in lines[0]
+        assert lines[0].count("x") == 10000
+        assert "   5.1\t" in lines[1]
+        assert lines[1].count("x") == 5000
+        assert "     6\tmiddle" in lines[2]
+        assert "     7\t" in lines[3]
+        assert lines[3].count("y") == 10000
+        assert "   7.1\t" in lines[4]
+        assert lines[4].count("y") == 5000
+
+    def test_format_content_with_line_numbers_exact_limit(self):
+        """Test that a line exactly at the 10000 char limit is not split."""
+        from deepagents.backends.utils import format_content_with_line_numbers
+
+        exact_line = "b" * 10000
+        content = [exact_line]
+        result = format_content_with_line_numbers(content, start_line=1)
+
+        lines = result.split("\n")
+        assert len(lines) == 1
+        assert "     1\t" in lines[0]
+        assert lines[0].count("b") == 10000
+
+    def test_read_file_with_long_lines_shows_continuation_markers(self):
+        """Test that read_file displays long lines with continuation markers."""
+        from deepagents.backends.utils import format_read_response, create_file_data
+
+        long_line = "z" * 15000
+        content = f"first line\n{long_line}\nthird line"
+        file_data = create_file_data(content)
+        result = format_read_response(file_data, offset=0, limit=100)
+        lines = result.split("\n")
+        assert len(lines) == 4
+        assert "     1\tfirst line" in lines[0]
+        assert "     2\t" in lines[1]
+        assert lines[1].count("z") == 10000
+        assert "   2.1\t" in lines[2]
+        assert lines[2].count("z") == 5000
+        assert "     3\tthird line" in lines[3]
+
+    def test_read_file_with_offset_and_long_lines(self):
+        """Test that read_file with offset handles long lines correctly."""
+        from deepagents.backends.utils import format_read_response, create_file_data
+
+        long_line = "m" * 12000
+        content = f"line1\nline2\n{long_line}\nline4"
+        file_data = create_file_data(content)
+        result = format_read_response(file_data, offset=2, limit=10)
+        lines = result.split("\n")
+        assert len(lines) == 3
+        assert "     3\t" in lines[0]
+        assert lines[0].count("m") == 10000
+        assert "   3.1\t" in lines[1]
+        assert lines[1].count("m") == 2000
+        assert "     4\tline4" in lines[2]
+
+    def test_intercept_short_toolmessage(self):
+        """Test that small ToolMessages pass through unchanged."""
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        small_content = "x" * 1000
+        tool_message = ToolMessage(content=small_content, tool_call_id="test_123")
+        result = middleware._intercept_large_tool_result(tool_message, runtime)
+
+        assert result == tool_message
+
+    def test_intercept_long_toolmessage(self):
+        """Test that large ToolMessages are intercepted and saved to filesystem."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        large_content = "x" * 5000
+        tool_message = ToolMessage(content=large_content, tool_call_id="test_123")
+        result = middleware._intercept_large_tool_result(tool_message, runtime)
+
+        assert isinstance(result, Command)
+        assert "/large_tool_results/test_123" in result.update["files"]
+        assert "Tool result too large" in result.update["messages"][0].content
+
+    def test_intercept_command_with_short_toolmessage(self):
+        """Test that Commands with small messages pass through unchanged."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        small_content = "x" * 1000
+        tool_message = ToolMessage(content=small_content, tool_call_id="test_123")
+        command = Command(update={"messages": [tool_message], "files": {}})
+        result = middleware._intercept_large_tool_result(command, runtime)
+
+        assert isinstance(result, Command)
+        assert result.update["messages"][0].content == small_content
+
+    def test_intercept_command_with_long_toolmessage(self):
+        """Test that Commands with large messages are intercepted."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        large_content = "y" * 5000
+        tool_message = ToolMessage(content=large_content, tool_call_id="test_123")
+        command = Command(update={"messages": [tool_message], "files": {}})
+        result = middleware._intercept_large_tool_result(command, runtime)
+
+        assert isinstance(result, Command)
+        assert "/large_tool_results/test_123" in result.update["files"]
+        assert "Tool result too large" in result.update["messages"][0].content
+
+    def test_intercept_command_with_files_and_long_toolmessage(self):
+        """Test that file updates are properly merged with existing files and other keys preserved."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        large_content = "z" * 5000
+        tool_message = ToolMessage(content=large_content, tool_call_id="test_123")
+        existing_file = FileData(content=["existing"], created_at="2021-01-01", modified_at="2021-01-01")
+        command = Command(update={
+            "messages": [tool_message],
+            "files": {"/existing.txt": existing_file},
+            "custom_key": "custom_value"
+        })
+        result = middleware._intercept_large_tool_result(command, runtime)
+
+        assert isinstance(result, Command)
+        assert "/existing.txt" in result.update["files"]
+        assert "/large_tool_results/test_123" in result.update["files"]
+        assert result.update["custom_key"] == "custom_value"
+
+    def test_sanitize_tool_call_id(self):
+        """Test that tool_call_id is sanitized to prevent path traversal."""
+        from deepagents.backends.utils import sanitize_tool_call_id
+
+        assert sanitize_tool_call_id("call_123") == "call_123"
+        assert sanitize_tool_call_id("call/123") == "call_123"
+        assert sanitize_tool_call_id("test.id") == "test_id"
+
+    def test_intercept_sanitizes_tool_call_id(self):
+        """Test that tool_call_id with dangerous characters is sanitized in file path."""
+        from langgraph.types import Command
+
+        middleware = FilesystemMiddleware(tool_token_limit_before_evict=1000)
+        state = FilesystemState(messages=[], files={})
+        runtime = ToolRuntime(state=state, context=None, tool_call_id="test_123", store=None, stream_writer=lambda _: None, config={})
+
+        large_content = "x" * 5000
+        tool_message = ToolMessage(content=large_content, tool_call_id="test/call.id")
+        result = middleware._intercept_large_tool_result(tool_message, runtime)
+
+        assert isinstance(result, Command)
+        assert "/large_tool_results/test_call_id" in result.update["files"]
 
 
 @pytest.mark.requires("langchain_openai")
@@ -727,13 +974,14 @@ class TestPatchToolCallsMiddleware:
         middleware = PatchToolCallsMiddleware()
         state_update = middleware.before_agent({"messages": input_messages}, None)
         assert state_update is not None
-        assert len(state_update["messages"]) == 3
-        assert state_update["messages"][0].type == "remove"
-        assert state_update["messages"][1].type == "system"
-        assert state_update["messages"][1].content == "You are a helpful assistant."
-        assert state_update["messages"][2].type == "human"
-        assert state_update["messages"][2].content == "Hello, how are you?"
-        assert state_update["messages"][2].id == "2"
+        assert isinstance(state_update["messages"], Overwrite)
+        patched_messages = state_update["messages"].value
+        assert len(patched_messages) == 2
+        assert patched_messages[0].type == "system"
+        assert patched_messages[0].content == "You are a helpful assistant."
+        assert patched_messages[1].type == "human"
+        assert patched_messages[1].content == "Hello, how are you?"
+        assert patched_messages[1].id == "2"
 
     def test_missing_tool_call(self) -> None:
         input_messages = [
@@ -749,24 +997,23 @@ class TestPatchToolCallsMiddleware:
         middleware = PatchToolCallsMiddleware()
         state_update = middleware.before_agent({"messages": input_messages}, None)
         assert state_update is not None
-        assert len(state_update["messages"]) == 6
-        assert state_update["messages"][0].type == "remove"
-        assert state_update["messages"][1] == input_messages[0]
-        assert state_update["messages"][2] == input_messages[1]
-        assert state_update["messages"][3] == input_messages[2]
-        assert state_update["messages"][4].type == "tool"
-        assert state_update["messages"][4].tool_call_id == "123"
-        assert state_update["messages"][4].name == "get_events_for_days"
-        assert state_update["messages"][5] == input_messages[3]
-        updated_messages = add_messages(input_messages, state_update["messages"])
-        assert len(updated_messages) == 5
-        assert updated_messages[0] == input_messages[0]
-        assert updated_messages[1] == input_messages[1]
-        assert updated_messages[2] == input_messages[2]
-        assert updated_messages[3].type == "tool"
-        assert updated_messages[3].tool_call_id == "123"
-        assert updated_messages[3].name == "get_events_for_days"
-        assert updated_messages[4] == input_messages[3]
+        assert isinstance(state_update["messages"], Overwrite)
+        patched_messages = state_update["messages"].value
+        assert len(patched_messages) == 5
+        assert patched_messages[0].type == "system"
+        assert patched_messages[0].content == "You are a helpful assistant."
+        assert patched_messages[1].type == "human"
+        assert patched_messages[1].content == "Hello, how are you?"
+        assert patched_messages[2].type == "ai"
+        assert len(patched_messages[2].tool_calls) == 1
+        assert patched_messages[2].tool_calls[0]["id"] == "123"
+        assert patched_messages[2].tool_calls[0]["name"] == "get_events_for_days"
+        assert patched_messages[2].tool_calls[0]["args"] == {"date_str": "2025-01-01"}
+        assert patched_messages[3].type == "tool"
+        assert patched_messages[3].name == "get_events_for_days"
+        assert patched_messages[3].tool_call_id == "123"
+        assert patched_messages[4].type == "human"
+        assert patched_messages[4].content == "What is the weather in Tokyo?"
 
     def test_no_missing_tool_calls(self) -> None:
         input_messages = [
@@ -783,12 +1030,22 @@ class TestPatchToolCallsMiddleware:
         middleware = PatchToolCallsMiddleware()
         state_update = middleware.before_agent({"messages": input_messages}, None)
         assert state_update is not None
-        assert len(state_update["messages"]) == 6
-        assert state_update["messages"][0].type == "remove"
-        assert state_update["messages"][1:] == input_messages
-        updated_messages = add_messages(input_messages, state_update["messages"])
-        assert len(updated_messages) == 5
-        assert updated_messages == input_messages
+        assert isinstance(state_update["messages"], Overwrite)
+        patched_messages = state_update["messages"].value
+        assert len(patched_messages) == 5
+        assert patched_messages[0].type == "system"
+        assert patched_messages[0].content == "You are a helpful assistant."
+        assert patched_messages[1].type == "human"
+        assert patched_messages[1].content == "Hello, how are you?"
+        assert patched_messages[2].type == "ai"
+        assert len(patched_messages[2].tool_calls) == 1
+        assert patched_messages[2].tool_calls[0]["id"] == "123"
+        assert patched_messages[2].tool_calls[0]["name"] == "get_events_for_days"
+        assert patched_messages[2].tool_calls[0]["args"] == {"date_str": "2025-01-01"}
+        assert patched_messages[3].type == "tool"
+        assert patched_messages[3].tool_call_id == "123"
+        assert patched_messages[4].type == "human"
+        assert patched_messages[4].content == "What is the weather in Tokyo?"
 
     def test_two_missing_tool_calls(self) -> None:
         input_messages = [
@@ -810,34 +1067,33 @@ class TestPatchToolCallsMiddleware:
         middleware = PatchToolCallsMiddleware()
         state_update = middleware.before_agent({"messages": input_messages}, None)
         assert state_update is not None
-        assert len(state_update["messages"]) == 9
-        assert state_update["messages"][0].type == "remove"
-        assert state_update["messages"][1] == input_messages[0]
-        assert state_update["messages"][2] == input_messages[1]
-        assert state_update["messages"][3] == input_messages[2]
-        assert state_update["messages"][4].type == "tool"
-        assert state_update["messages"][4].tool_call_id == "123"
-        assert state_update["messages"][4].name == "get_events_for_days"
-        assert state_update["messages"][5] == input_messages[3]
-        assert state_update["messages"][6] == input_messages[4]
-        assert state_update["messages"][7].type == "tool"
-        assert state_update["messages"][7].tool_call_id == "456"
-        assert state_update["messages"][7].name == "get_events_for_days"
-        assert state_update["messages"][8] == input_messages[5]
-        updated_messages = add_messages(input_messages, state_update["messages"])
-        assert len(updated_messages) == 8
-        assert updated_messages[0] == input_messages[0]
-        assert updated_messages[1] == input_messages[1]
-        assert updated_messages[2] == input_messages[2]
-        assert updated_messages[3].type == "tool"
-        assert updated_messages[3].tool_call_id == "123"
-        assert updated_messages[3].name == "get_events_for_days"
-        assert updated_messages[4] == input_messages[3]
-        assert updated_messages[5] == input_messages[4]
-        assert updated_messages[6].type == "tool"
-        assert updated_messages[6].tool_call_id == "456"
-        assert updated_messages[6].name == "get_events_for_days"
-        assert updated_messages[7] == input_messages[5]
+        assert isinstance(state_update["messages"], Overwrite)
+        patched_messages = state_update["messages"].value
+        assert len(patched_messages) == 8
+        assert patched_messages[0].type == "system"
+        assert patched_messages[0].content == "You are a helpful assistant."
+        assert patched_messages[1].type == "human"
+        assert patched_messages[1].content == "Hello, how are you?"
+        assert patched_messages[2].type == "ai"
+        assert len(patched_messages[2].tool_calls) == 1
+        assert patched_messages[2].tool_calls[0]["id"] == "123"
+        assert patched_messages[2].tool_calls[0]["name"] == "get_events_for_days"
+        assert patched_messages[2].tool_calls[0]["args"] == {"date_str": "2025-01-01"}
+        assert patched_messages[3].type == "tool"
+        assert patched_messages[3].name == "get_events_for_days"
+        assert patched_messages[3].tool_call_id == "123"
+        assert patched_messages[4].type == "human"
+        assert patched_messages[4].content == "What is the weather in Tokyo?"
+        assert patched_messages[5].type == "ai"
+        assert len(patched_messages[5].tool_calls) == 1
+        assert patched_messages[5].tool_calls[0]["id"] == "456"
+        assert patched_messages[5].tool_calls[0]["name"] == "get_events_for_days"
+        assert patched_messages[5].tool_calls[0]["args"] == {"date_str": "2025-01-01"}
+        assert patched_messages[6].type == "tool"
+        assert patched_messages[6].name == "get_events_for_days"
+        assert patched_messages[6].tool_call_id == "456"
+        assert patched_messages[7].type == "human"
+        assert patched_messages[7].content == "What is the weather in Tokyo?"
 
 
 class TestTruncation:
