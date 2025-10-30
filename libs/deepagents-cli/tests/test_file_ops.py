@@ -1,8 +1,7 @@
 import textwrap
 
-from langchain_core.messages import ToolMessage
-
 from deepagents.cli.file_ops import FileOpTracker, build_approval_preview
+from langchain_core.messages import ToolMessage
 
 
 def test_tracker_records_read_lines(tmp_path):
@@ -57,12 +56,14 @@ def test_tracker_records_write_diff(tmp_path):
 def test_tracker_records_edit_diff(tmp_path):
     tracker = FileOpTracker(assistant_id=None)
     file_path = tmp_path / "functions.py"
-    file_path.write_text(textwrap.dedent(
-        """\
+    file_path.write_text(
+        textwrap.dedent(
+            """\
         def greet():
             return "hello"
         """
-    ))
+        )
+    )
 
     tracker.start_operation(
         "edit_file",
@@ -70,15 +71,17 @@ def test_tracker_records_edit_diff(tmp_path):
         "edit-1",
     )
 
-    file_path.write_text(textwrap.dedent(
-        """\
+    file_path.write_text(
+        textwrap.dedent(
+            """\
         def greet():
             return "hi"
 
         def wave():
             return "wave"
         """
-    ))
+        )
+    )
 
     message = ToolMessage(
         content=f"Successfully replaced 1 instance(s) of the string in '{file_path}'",
@@ -91,8 +94,8 @@ def test_tracker_records_edit_diff(tmp_path):
     assert record.metrics.lines_added >= 1
     assert record.metrics.lines_removed >= 1
     assert record.diff is not None
-    assert "-    return \"hello\"" in record.diff
-    assert "+    return \"hi\"" in record.diff
+    assert '-    return "hello"' in record.diff
+    assert '+    return "hi"' in record.diff
 
 
 def test_build_approval_preview_generates_diff(tmp_path):
