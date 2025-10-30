@@ -2,7 +2,7 @@ import textwrap
 
 from langchain_core.messages import ToolMessage
 
-from deepagents.cli.file_ops import FileOpTracker
+from deepagents.cli.file_ops import FileOpTracker, build_approval_preview
 
 
 def test_tracker_records_read_lines(tmp_path):
@@ -93,3 +93,23 @@ def test_tracker_records_edit_diff(tmp_path):
     assert record.diff is not None
     assert "-    return \"hello\"" in record.diff
     assert "+    return \"hi\"" in record.diff
+
+
+def test_build_approval_preview_generates_diff(tmp_path):
+    target = tmp_path / "notes.txt"
+    target.write_text("alpha\nbeta\n")
+
+    preview = build_approval_preview(
+        "edit_file",
+        {
+            "file_path": str(target),
+            "old_string": "beta",
+            "new_string": "gamma",
+            "replace_all": False,
+        },
+        assistant_id=None,
+    )
+
+    assert preview is not None
+    assert preview.diff is not None
+    assert "+gamma" in preview.diff

@@ -147,6 +147,7 @@ The agent can create and update a visual todo list for multi-step tasks.
 - Writes and edits capture before/after snapshots, reporting lines added or removed plus bytes written.
 - A Rich-powered unified diff renders in-line with syntax highlighting so you can review every proposed change before confirming.
 - Diff output truncates gracefully for very large edits while still surfacing a summary.
+- When Human-in-the-Loop approval is required, the proposed diff is shown *before* you choose Approve/Reject.
 
 ### Human-in-the-Loop Shell Approval
 Shell commands require user approval with an interactive arrow-key menu.

@@ -12,7 +12,7 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 
 from .config import console, COLORS
-from .file_ops import FileOpTracker
+from .file_ops import FileOpTracker, build_approval_preview
 from .ui import (
     render_todo_list,
     format_tool_message_content,
@@ -20,6 +20,7 @@ from .ui import (
     format_tool_display,
     render_summary_panel,
     render_file_operation,
+    render_diff_block,
 )
 from .input import parse_file_mentions
 
@@ -39,17 +40,49 @@ def is_summary_message(content: str) -> bool:
     )
 
 
-def prompt_for_tool_approval(action_request: dict) -> dict:
+def _extract_tool_args(action_request: dict) -> dict | None:
+    """Best-effort extraction of tool call arguments from an action request."""
+    if "tool_call" in action_request and isinstance(action_request["tool_call"], dict):
+        args = action_request["tool_call"].get("args")
+        if isinstance(args, dict):
+            return args
+    args = action_request.get("args")
+    if isinstance(args, dict):
+        return args
+    return None
+
+
+def prompt_for_tool_approval(action_request: dict, assistant_id: str | None) -> dict:
     """Prompt user to approve/reject a tool action with arrow key navigation."""
+    description = action_request.get('description', 'No description available')
+    tool_name = action_request.get("name") or action_request.get("tool")
+    tool_args = _extract_tool_args(action_request)
+    preview = build_approval_preview(tool_name, tool_args, assistant_id) if tool_name else None
+
+    body_lines = []
+    if preview:
+        body_lines.append(f"[bold]{preview.title}[/bold]")
+        body_lines.extend(preview.details)
+        if preview.error:
+            body_lines.append(f"[red]{preview.error}[/red]")
+        if description and description != "No description available":
+            body_lines.append("")
+            body_lines.append(description)
+    else:
+        body_lines.append(description)
+
     # Display action info first
     console.print()
     console.print(Panel(
-        f"[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
-        f"{action_request.get('description', 'No description available')}",
+        "[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
+        + "\n".join(body_lines),
         border_style="yellow",
         box=box.ROUNDED,
         padding=(0, 1)
     ))
+    if preview and preview.diff and not preview.error:
+        console.print()
+        render_diff_block(preview.diff, preview.diff_title or preview.title)
     console.print()
 
     options = ["approve", "reject"]
@@ -306,7 +339,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                 # Handle human-in-the-loop approval
                                 decisions = []
                                 for action_request in hitl_request.get("action_requests", []):
-                                    decision = prompt_for_tool_approval(action_request)
+                                    decision = prompt_for_tool_approval(action_request, assistant_id)
                                     decisions.append(decision)
 
                                 suppress_resumed_output = any(decision.get("type") == "reject" for decision in decisions)

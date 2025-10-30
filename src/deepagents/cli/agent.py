@@ -157,23 +157,14 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
         file_path = args.get('file_path', 'unknown')
         content = args.get('content', '')
 
-        # Check if file exists to determine action
         action = "Overwrite" if os.path.exists(file_path) else "Create"
-        size = len(content)
-
-        # Preview first 300 chars
-        preview = content[:300]
-        if len(content) > 300:
-            preview += "\n... (truncated)"
+        line_count = len(content.splitlines())
+        size = len(content.encode("utf-8"))
 
         return (
             f"File: {file_path}\n"
             f"Action: {action} file\n"
-            f"Size: {size:,} bytes\n\n"
-            f"Preview:\n"
-            f"{'─' * 40}\n"
-            f"{preview}\n"
-            f"{'─' * 40}"
+            f"Lines: {line_count} · Bytes: {size}"
         )
 
     def format_edit_file_description(tool_call: dict) -> str:
@@ -182,22 +173,14 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
         file_path = args.get('file_path', 'unknown')
         old_string = args.get('old_string', '')
         new_string = args.get('new_string', '')
+        replace_all = bool(args.get('replace_all', False))
 
-        # Truncate if too long
-        old_preview = old_string[:200]
-        new_preview = new_string[:200]
-        if len(old_string) > 200:
-            old_preview += "..."
-        if len(new_string) > 200:
-            new_preview += "..."
+        delta = len(new_string) - len(old_string)
 
         return (
             f"File: {file_path}\n"
-            f"Action: Replace text\n\n"
-            f"Old text:\n"
-            f"  {old_preview}\n\n"
-            f"New text:\n"
-            f"  {new_preview}"
+            f"Action: Replace text ({'all occurrences' if replace_all else 'single occurrence'})\n"
+            f"Snippet delta: {delta:+} characters"
         )
 
     def format_web_search_description(tool_call: dict) -> str:

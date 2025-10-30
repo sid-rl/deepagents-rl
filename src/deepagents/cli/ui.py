@@ -312,8 +312,12 @@ def render_diff(record: FileOperationRecord) -> None:
     """Render diff for a file operation."""
     if not record.diff:
         return
-    syntax = Syntax(record.diff, "diff", theme="monokai", line_numbers=False)
-    title = f"Diff {record.display_path}"
+    render_diff_block(record.diff, f"Diff {record.display_path}")
+
+
+def render_diff_block(diff: str, title: str) -> None:
+    """Render a diff string inside a Rich panel."""
+    syntax = Syntax(diff, "diff", theme="monokai", line_numbers=False)
     panel = Panel(syntax, title=title, border_style=COLORS["primary"], box=box.ROUNDED, padding=(0, 1))
     console.print(panel)
 
