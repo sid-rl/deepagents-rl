@@ -231,6 +231,15 @@ All file paths must start with a /.
 
 
 def _get_backend(backend: BACKEND_TYPES, runtime: ToolRuntime) -> BackendProtocol:
+    """Get the resolved backend instance from backend or factory.
+
+    Args:
+        backend: Backend instance or factory function.
+        runtime: The tool runtime context.
+
+    Returns:
+        Resolved backend instance.
+    """
     if callable(backend):
         return backend(runtime)
     return backend
@@ -535,6 +544,19 @@ class FilesystemMiddleware(AgentMiddleware):
         self.system_prompt = system_prompt if system_prompt is not None else FILESYSTEM_SYSTEM_PROMPT
 
         self.tools = _get_filesystem_tools(self.backend, custom_tool_descriptions)
+
+    def _get_backend(self, runtime: ToolRuntime) -> BackendProtocol:
+        """Get the resolved backend instance from backend or factory.
+
+        Args:
+            runtime: The tool runtime context.
+
+        Returns:
+            Resolved backend instance.
+        """
+        if callable(self.backend):
+            return self.backend(runtime)
+        return self.backend
 
     def wrap_model_call(
         self,
