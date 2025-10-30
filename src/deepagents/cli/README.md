@@ -142,6 +142,12 @@ Type `!command` to execute bash commands directly (e.g., `!ls`, `!git status`)
 ### Todo List Tracking
 The agent can create and update a visual todo list for multi-step tasks.
 
+### File Operation Summaries & Diff Viewer
+- File reads now show a concise summary with the number of lines streamed (e.g., `⏺ Read(example.py)` followed by `⎿  Read 44 lines (lines 1-44)`).
+- Writes and edits capture before/after snapshots, reporting lines added or removed plus bytes written.
+- A Rich-powered unified diff renders in-line with syntax highlighting so you can review every proposed change before confirming.
+- Diff output truncates gracefully for very large edits while still surfacing a summary.
+
 ### Human-in-the-Loop Shell Approval
 Shell commands require user approval with an interactive arrow-key menu.
 

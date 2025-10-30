@@ -3,10 +3,13 @@ import json
 from typing import Any
 from pathlib import Path
 
-from rich.panel import Panel
 from rich import box
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
 
 from .config import console, COLORS, COMMANDS, MAX_ARG_LENGTH, DEEP_AGENTS_ASCII
+from .file_ops import FileOperationRecord
 
 
 def truncate_value(value: str, max_length: int = MAX_ARG_LENGTH) -> str:
@@ -239,6 +242,79 @@ def render_summary_panel(summary_content: str) -> None:
         box=box.ROUNDED,
         padding=(1, 2)
     )
+    console.print(panel)
+
+
+def _format_line_span(start: int | None, end: int | None) -> str:
+    if start is None and end is None:
+        return ""
+    if start is not None and end is None:
+        return f"(starting at line {start})"
+    if start is None and end is not None:
+        return f"(through line {end})"
+    if start == end:
+        return f"(line {start})"
+    return f"(lines {start}-{end})"
+
+
+def render_file_operation(record: FileOperationRecord) -> None:
+    """Render a concise summary of a filesystem tool call."""
+    label_lookup = {
+        "read_file": "Read",
+        "write_file": "Write",
+        "edit_file": "Update",
+    }
+    label = label_lookup.get(record.tool_name, record.tool_name)
+    header = Text()
+    header.append("⏺ ", style=COLORS["tool"])
+    header.append(f"{label}({record.display_path})", style=f"bold {COLORS['tool']}")
+    console.print(header)
+
+    def _print_detail(message: str, *, style: str = COLORS["dim"]) -> None:
+        detail = Text()
+        detail.append("  ⎿  ", style=style)
+        detail.append(message, style=style)
+        console.print(detail)
+
+    if record.status == "error":
+        _print_detail(record.error or "Error executing file operation", style="red")
+        return
+
+    if record.tool_name == "read_file":
+        lines = record.metrics.lines_read
+        span = _format_line_span(record.metrics.start_line, record.metrics.end_line)
+        detail = f"Read {lines} line{'s' if lines != 1 else ''}"
+        if span:
+            detail = f"{detail} {span}"
+        _print_detail(detail)
+    else:
+        bytes_written = record.metrics.bytes_written
+        if record.tool_name == "write_file":
+            lines = record.metrics.lines_written
+            detail = f"Wrote {lines} line{'s' if lines != 1 else ''}"
+            if record.metrics.lines_added:
+                detail = f"{detail} (+{record.metrics.lines_added})"
+        else:
+            added = record.metrics.lines_added
+            removed = record.metrics.lines_removed
+            detail = f"Edited {record.metrics.lines_written} total line{'s' if record.metrics.lines_written != 1 else ''}"
+            if added or removed:
+                detail = f"{detail} (+{added} / -{removed})"
+        if bytes_written:
+            detail = f"{detail} · {bytes_written} bytes"
+        _print_detail(detail)
+
+    if record.diff:
+        render_diff(record)
+
+
+def render_diff(record: FileOperationRecord) -> None:
+    """Render diff for a file operation."""
+    if not record.diff:
+        return
+    syntax = Syntax(record.diff, "diff", theme="monokai", line_numbers=False)
+    title = f"Diff {record.display_path}"
+    panel = Panel(syntax, title=title, border_style=COLORS["primary"], box=box.ROUNDED, padding=(0, 1))
     console.print(panel)
 
 

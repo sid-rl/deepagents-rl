@@ -12,7 +12,15 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 
 from .config import console, COLORS
-from .ui import render_todo_list, format_tool_message_content, TokenTracker, format_tool_display, render_summary_panel
+from .file_ops import FileOpTracker
+from .ui import (
+    render_todo_list,
+    format_tool_message_content,
+    TokenTracker,
+    format_tool_display,
+    render_summary_panel,
+    render_file_operation,
+)
 from .input import parse_file_mentions
 
 
@@ -184,6 +192,8 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
         "write_todos": "📋",
     }
 
+    file_op_tracker = FileOpTracker(assistant_id=assistant_id)
+
     # Track which tool calls we've displayed to avoid duplicates
     displayed_tool_ids = set()
     # Buffer partial tool-call chunks keyed by streaming index
@@ -335,6 +345,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                         tool_name = getattr(message, "name", "")
                         tool_status = getattr(message, "status", "success")
                         tool_content = format_tool_message_content(message.content)
+                        record = file_op_tracker.complete_with_message(message)
 
                         if tool_name == "shell" and tool_status != "success":
                             flush_summary_buffer()
@@ -357,6 +368,19 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                 console.print()
                                 console.print(tool_content, style="red", markup=False)
                                 console.print()
+
+                        if record:
+                            flush_summary_buffer()
+                            flush_text_buffer(final=True)
+                            if spinner_active:
+                                status.stop()
+                                spinner_active = False
+                            console.print()
+                            render_file_operation(record)
+                            console.print()
+                            if not spinner_active:
+                                status.start()
+                                spinner_active = True
 
                         # For all other tools (web_search, http_request, etc.),
                         # results are hidden from user - agent will process and respond
@@ -476,6 +500,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                             flush_text_buffer(final=True)
                             if buffer_id is not None:
                                 displayed_tool_ids.add(buffer_id)
+                                file_op_tracker.start_operation(buffer_name, parsed_args, buffer_id)
                             tool_call_buffers.pop(buffer_key, None)
                             icon = tool_icons.get(buffer_name, "🔧")
 
