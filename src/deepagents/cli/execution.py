@@ -31,12 +31,12 @@ def is_summary_message(content: str) -> bool:
     )
 
 
-def prompt_for_shell_approval(action_request: dict) -> dict:
-    """Prompt user to approve/reject a shell command with arrow key navigation."""
-    # Display command info first
+def prompt_for_tool_approval(action_request: dict) -> dict:
+    """Prompt user to approve/reject a tool action with arrow key navigation."""
+    # Display action info first
     console.print()
     console.print(Panel(
-        f"[bold yellow]⚠️  Shell Command Requires Approval[/bold yellow]\n\n"
+        f"[bold yellow]⚠️  Tool Action Requires Approval[/bold yellow]\n\n"
         f"{action_request.get('description', 'No description available')}",
         border_style="yellow",
         box=box.ROUNDED,
@@ -296,7 +296,7 @@ def execute_task(user_input: str, agent, assistant_id: str | None, session_state
                                 # Handle human-in-the-loop approval
                                 decisions = []
                                 for action_request in hitl_request.get("action_requests", []):
-                                    decision = prompt_for_shell_approval(action_request)
+                                    decision = prompt_for_tool_approval(action_request)
                                     decisions.append(decision)
 
                                 suppress_resumed_output = any(decision.get("type") == "reject" for decision in decisions)

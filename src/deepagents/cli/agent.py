@@ -150,14 +150,117 @@ When using the write_todos tool:
 
 The todo list is a planning tool - use it judiciously to avoid overwhelming the user with excessive task tracking."""
 
-    # Configure human-in-the-loop for shell commands
+    # Helper functions for formatting tool descriptions in HITL prompts
+    def format_write_file_description(tool_call: dict) -> str:
+        """Format write_file tool call for approval prompt."""
+        args = tool_call.get('args', {})
+        file_path = args.get('file_path', 'unknown')
+        content = args.get('content', '')
+
+        # Check if file exists to determine action
+        action = "Overwrite" if os.path.exists(file_path) else "Create"
+        size = len(content)
+
+        # Preview first 300 chars
+        preview = content[:300]
+        if len(content) > 300:
+            preview += "\n... (truncated)"
+
+        return (
+            f"File: {file_path}\n"
+            f"Action: {action} file\n"
+            f"Size: {size:,} bytes\n\n"
+            f"Preview:\n"
+            f"{'─' * 40}\n"
+            f"{preview}\n"
+            f"{'─' * 40}"
+        )
+
+    def format_edit_file_description(tool_call: dict) -> str:
+        """Format edit_file tool call for approval prompt."""
+        args = tool_call.get('args', {})
+        file_path = args.get('file_path', 'unknown')
+        old_string = args.get('old_string', '')
+        new_string = args.get('new_string', '')
+
+        # Truncate if too long
+        old_preview = old_string[:200]
+        new_preview = new_string[:200]
+        if len(old_string) > 200:
+            old_preview += "..."
+        if len(new_string) > 200:
+            new_preview += "..."
+
+        return (
+            f"File: {file_path}\n"
+            f"Action: Replace text\n\n"
+            f"Old text:\n"
+            f"  {old_preview}\n\n"
+            f"New text:\n"
+            f"  {new_preview}"
+        )
+
+    def format_web_search_description(tool_call: dict) -> str:
+        """Format web_search tool call for approval prompt."""
+        args = tool_call.get('args', {})
+        query = args.get('query', 'unknown')
+        max_results = args.get('max_results', 5)
+
+        return (
+            f"Query: {query}\n"
+            f"Max results: {max_results}\n\n"
+            f"⚠️  This will use Tavily API credits"
+        )
+
+    def format_task_description(tool_call: dict) -> str:
+        """Format task (subagent) tool call for approval prompt."""
+        args = tool_call.get('args', {})
+        description = args.get('description', 'unknown')
+        prompt = args.get('prompt', '')
+
+        # Truncate prompt if too long
+        prompt_preview = prompt[:300]
+        if len(prompt) > 300:
+            prompt_preview += "..."
+
+        return (
+            f"Task: {description}\n\n"
+            f"Instructions to subagent:\n"
+            f"{'─' * 40}\n"
+            f"{prompt_preview}\n"
+            f"{'─' * 40}\n\n"
+            f"⚠️  Subagent will have access to file operations and shell commands"
+        )
+
+    # Configure human-in-the-loop for potentially destructive tools
     from langchain.agents.middleware import InterruptOnConfig
+
     shell_interrupt_config: InterruptOnConfig = {
-        "allowed_decisions": ["approve", "reject", "edit"],
+        "allowed_decisions": ["approve", "reject"],
         "description": lambda tool_call, state, runtime: (
             f"Shell Command: {tool_call['args'].get('command', 'N/A')}\n"
             f"Working Directory: {os.getcwd()}"
         )
+    }
+
+    write_file_interrupt_config: InterruptOnConfig = {
+        "allowed_decisions": ["approve", "reject"],
+        "description": lambda tool_call, state, runtime: format_write_file_description(tool_call)
+    }
+
+    edit_file_interrupt_config: InterruptOnConfig = {
+        "allowed_decisions": ["approve", "reject"],
+        "description": lambda tool_call, state, runtime: format_edit_file_description(tool_call)
+    }
+
+    web_search_interrupt_config: InterruptOnConfig = {
+        "allowed_decisions": ["approve", "reject"],
+        "description": lambda tool_call, state, runtime: format_web_search_description(tool_call)
+    }
+
+    task_interrupt_config: InterruptOnConfig = {
+        "allowed_decisions": ["approve", "reject"],
+        "description": lambda tool_call, state, runtime: format_task_description(tool_call)
     }
 
     agent = create_deep_agent(
@@ -166,7 +269,13 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
         tools=tools,
         backend=backend,
         middleware=agent_middleware,
-        interrupt_on={"shell": shell_interrupt_config},
+        interrupt_on={
+            "shell": shell_interrupt_config,
+            "write_file": write_file_interrupt_config,
+            "edit_file": edit_file_interrupt_config,
+            "web_search": web_search_interrupt_config,
+            "task": task_interrupt_config,
+        },
     ).with_config(config)
 
     agent.checkpointer = InMemorySaver()
