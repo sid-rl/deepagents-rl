@@ -22,7 +22,17 @@ deepagents-cli = "deepagents_cli:cli_main"
 [tool.uv.sources]
 deepagents = { workspace = true }
 
-[project.optional-dependencies]
+[dependency-groups]
+test = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.3",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "pytest-socket>=0.7.0",
+    "pytest-timeout>=2.3.1",
+    "ruff>=0.9.7",
+]
+
 
 dev = [
     "pytest",
@@ -35,11 +45,8 @@ dev = [
     "pytest-asyncio>=1.2.0",
 ]
 
-[dependency-groups]
 lint = [
-    "ruff"
-]
-typing = [
+    "ruff",
     "mypy"
 ]
 
