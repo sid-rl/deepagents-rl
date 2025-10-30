@@ -355,9 +355,7 @@ def execute_task(
                             # Handle human-in-the-loop approval
                             decisions = []
                             for action_request in hitl_request.get("action_requests", []):
-                                decision = prompt_for_tool_approval(
-                                    action_request, assistant_id
-                                )
+                                decision = prompt_for_tool_approval(action_request, assistant_id)
                                 decisions.append(decision)
 
                             suppress_resumed_output = any(
