@@ -1,14 +1,15 @@
 """UI rendering and display utilities for the CLI."""
+
 import json
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 from rich import box
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
-from .config import console, COLORS, COMMANDS, MAX_ARG_LENGTH, DEEP_AGENTS_ASCII
+from .config import COLORS, COMMANDS, DEEP_AGENTS_ASCII, MAX_ARG_LENGTH, console
 from .file_ops import FileOperationRecord
 
 
@@ -36,6 +37,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
         web_search(query="how to code", max_results=5) → 'web_search("how to code")'
         shell(command="pip install foo") → 'shell("pip install foo")'
     """
+
     def abbreviate_path(path_str: str, max_length: int = 60) -> str:
         """Abbreviate a file path intelligently - show basename or relative path."""
         try:
@@ -98,7 +100,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
 
     elif tool_name == "ls":
         # ls: show directory, or empty if current directory
-        if "path" in tool_args and tool_args["path"]:
+        if tool_args.get("path"):
             path = abbreviate_path(str(tool_args["path"]))
             return f"{tool_name}({path})"
         return f"{tool_name}()"
@@ -120,7 +122,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
             url = truncate_value(url, 80)
             parts.append(url)
         if parts:
-            return f'{tool_name}({" ".join(parts)})'
+            return f"{tool_name}({' '.join(parts)})"
 
     elif tool_name == "task":
         # Task: show the task description
@@ -137,10 +139,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
 
     # Fallback: generic formatting for unknown tools
     # Show all arguments in key=value format
-    args_str = ", ".join(
-        f"{k}={truncate_value(str(v), 50)}"
-        for k, v in tool_args.items()
-    )
+    args_str = ", ".join(f"{k}={truncate_value(str(v), 50)}" for k, v in tool_args.items())
     return f"{tool_name}({args_str})"
 
 
@@ -185,8 +184,10 @@ class TokenTracker:
     def display_session(self):
         """Display current context size."""
         if self.current_context:
-            console.print(f"\n[bold]Token Usage:[/bold]", style=COLORS["primary"])
-            console.print(f"  Current context: {self.current_context:,} tokens", style=COLORS["dim"])
+            console.print("\n[bold]Token Usage:[/bold]", style=COLORS["primary"])
+            console.print(
+                f"  Current context: {self.current_context:,} tokens", style=COLORS["dim"]
+            )
             console.print()
 
 
@@ -217,7 +218,7 @@ def render_todo_list(todos: list[dict]) -> None:
         title="[bold]Task List[/bold]",
         border_style="cyan",
         box=box.ROUNDED,
-        padding=(0, 1)
+        padding=(0, 1),
     )
     console.print(panel)
 
@@ -240,7 +241,7 @@ def render_summary_panel(summary_content: str) -> None:
         title="[bold yellow]⚠ Context Summarized[/bold yellow]",
         border_style="yellow",
         box=box.ROUNDED,
-        padding=(1, 2)
+        padding=(1, 2),
     )
     console.print(panel)
 
@@ -318,7 +319,9 @@ def render_diff(record: FileOperationRecord) -> None:
 def render_diff_block(diff: str, title: str) -> None:
     """Render a diff string inside a Rich panel."""
     syntax = Syntax(diff, "diff", theme="monokai", line_numbers=False)
-    panel = Panel(syntax, title=title, border_style=COLORS["primary"], box=box.ROUNDED, padding=(0, 1))
+    panel = Panel(
+        syntax, title=title, border_style=COLORS["primary"], box=box.ROUNDED, padding=(0, 1)
+    )
     console.print(panel)
 
 
@@ -334,22 +337,39 @@ def show_interactive_help():
     console.print()
     console.print("[bold]Editing Features:[/bold]", style=COLORS["primary"])
     console.print("  Enter           Submit your message", style=COLORS["dim"])
-    console.print("  Alt+Enter       Insert newline (Option+Enter on Mac, or ESC then Enter)", style=COLORS["dim"])
-    console.print("  Ctrl+E          Open in external editor (nano by default)", style=COLORS["dim"])
+    console.print(
+        "  Alt+Enter       Insert newline (Option+Enter on Mac, or ESC then Enter)",
+        style=COLORS["dim"],
+    )
+    console.print(
+        "  Ctrl+E          Open in external editor (nano by default)", style=COLORS["dim"]
+    )
     console.print("  Ctrl+T          Toggle auto-approve mode", style=COLORS["dim"])
     console.print("  Arrow keys      Navigate input", style=COLORS["dim"])
     console.print("  Ctrl+C          Cancel input or interrupt agent mid-work", style=COLORS["dim"])
     console.print()
     console.print("[bold]Special Features:[/bold]", style=COLORS["primary"])
-    console.print("  @filename       Type @ to auto-complete files and inject content", style=COLORS["dim"])
+    console.print(
+        "  @filename       Type @ to auto-complete files and inject content", style=COLORS["dim"]
+    )
     console.print("  /command        Type / to see available commands", style=COLORS["dim"])
-    console.print("  !command        Type ! to run bash commands (e.g., !ls, !git status)", style=COLORS["dim"])
-    console.print("                  Completions appear automatically as you type", style=COLORS["dim"])
+    console.print(
+        "  !command        Type ! to run bash commands (e.g., !ls, !git status)",
+        style=COLORS["dim"],
+    )
+    console.print(
+        "                  Completions appear automatically as you type", style=COLORS["dim"]
+    )
     console.print()
     console.print("[bold]Auto-Approve Mode:[/bold]", style=COLORS["primary"])
     console.print("  Ctrl+T          Toggle auto-approve mode", style=COLORS["dim"])
-    console.print("  --auto-approve  Start CLI with auto-approve enabled (via command line)", style=COLORS["dim"])
-    console.print("  When enabled, tool actions execute without confirmation prompts", style=COLORS["dim"])
+    console.print(
+        "  --auto-approve  Start CLI with auto-approve enabled (via command line)",
+        style=COLORS["dim"],
+    )
+    console.print(
+        "  When enabled, tool actions execute without confirmation prompts", style=COLORS["dim"]
+    )
     console.print()
 
 
@@ -363,21 +383,40 @@ def show_help():
     console.print("  deepagents [--agent NAME] [--auto-approve]     Start interactive session")
     console.print("  deepagents list                                List all available agents")
     console.print("  deepagents reset --agent AGENT                 Reset agent to default prompt")
-    console.print("  deepagents reset --agent AGENT --target SOURCE Reset agent to copy of another agent")
+    console.print(
+        "  deepagents reset --agent AGENT --target SOURCE Reset agent to copy of another agent"
+    )
     console.print("  deepagents help                                Show this help message")
     console.print()
 
     console.print("[bold]Examples:[/bold]", style=COLORS["primary"])
-    console.print("  deepagents                              # Start with default agent", style=COLORS["dim"])
-    console.print("  deepagents --agent mybot                # Start with agent named 'mybot'", style=COLORS["dim"])
-    console.print("  deepagents --auto-approve               # Start with auto-approve enabled", style=COLORS["dim"])
-    console.print("  deepagents list                         # List all agents", style=COLORS["dim"])
-    console.print("  deepagents reset --agent mybot          # Reset mybot to default", style=COLORS["dim"])
-    console.print("  deepagents reset --agent mybot --target other # Reset mybot to copy of 'other' agent", style=COLORS["dim"])
+    console.print(
+        "  deepagents                              # Start with default agent", style=COLORS["dim"]
+    )
+    console.print(
+        "  deepagents --agent mybot                # Start with agent named 'mybot'",
+        style=COLORS["dim"],
+    )
+    console.print(
+        "  deepagents --auto-approve               # Start with auto-approve enabled",
+        style=COLORS["dim"],
+    )
+    console.print(
+        "  deepagents list                         # List all agents", style=COLORS["dim"]
+    )
+    console.print(
+        "  deepagents reset --agent mybot          # Reset mybot to default", style=COLORS["dim"]
+    )
+    console.print(
+        "  deepagents reset --agent mybot --target other # Reset mybot to copy of 'other' agent",
+        style=COLORS["dim"],
+    )
     console.print()
 
     console.print("[bold]Long-term Memory:[/bold]", style=COLORS["primary"])
-    console.print("  By default, long-term memory is ENABLED using agent name 'agent'.", style=COLORS["dim"])
+    console.print(
+        "  By default, long-term memory is ENABLED using agent name 'agent'.", style=COLORS["dim"]
+    )
     console.print("  Memory includes:", style=COLORS["dim"])
     console.print("  - Persistent agent.md file with your instructions", style=COLORS["dim"])
     console.print("  - /memories/ folder for storing context across sessions", style=COLORS["dim"])
@@ -390,12 +429,19 @@ def show_help():
 
     console.print("[bold]Interactive Features:[/bold]", style=COLORS["primary"])
     console.print("  Enter           Submit your message", style=COLORS["dim"])
-    console.print("  Alt+Enter       Insert newline for multi-line (Option+Enter or ESC then Enter)", style=COLORS["dim"])
+    console.print(
+        "  Alt+Enter       Insert newline for multi-line (Option+Enter or ESC then Enter)",
+        style=COLORS["dim"],
+    )
     console.print("  Ctrl+J          Insert newline (alternative)", style=COLORS["dim"])
     console.print("  Ctrl+T          Toggle auto-approve mode", style=COLORS["dim"])
     console.print("  Arrow keys      Navigate input", style=COLORS["dim"])
-    console.print("  @filename       Type @ to auto-complete files and inject content", style=COLORS["dim"])
-    console.print("  /command        Type / to see available commands (auto-completes)", style=COLORS["dim"])
+    console.print(
+        "  @filename       Type @ to auto-complete files and inject content", style=COLORS["dim"]
+    )
+    console.print(
+        "  /command        Type / to see available commands (auto-completes)", style=COLORS["dim"]
+    )
     console.print()
 
     console.print("[bold]Interactive Commands:[/bold]", style=COLORS["primary"])
@@ -403,5 +449,7 @@ def show_help():
     console.print("  /clear          Clear screen and reset conversation", style=COLORS["dim"])
     console.print("  /tokens         Show token usage for current session", style=COLORS["dim"])
     console.print("  /quit, /exit    Exit the session", style=COLORS["dim"])
-    console.print("  quit, exit, q   Exit the session (just type and press Enter)", style=COLORS["dim"])
+    console.print(
+        "  quit, exit, q   Exit the session (just type and press Enter)", style=COLORS["dim"]
+    )
     console.print()

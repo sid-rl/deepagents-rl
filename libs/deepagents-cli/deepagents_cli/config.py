@@ -1,4 +1,5 @@
 """Configuration, constants, and model creation for the CLI."""
+
 import os
 import sys
 from pathlib import Path
@@ -37,32 +38,32 @@ DEEP_AGENTS_ASCII = """
 
 # Interactive commands
 COMMANDS = {
-    'clear': 'Clear screen and reset conversation',
-    'help': 'Show help information',
-    'tokens': 'Show token usage for current session',
-    'quit': 'Exit the CLI',
-    'exit': 'Exit the CLI',
+    "clear": "Clear screen and reset conversation",
+    "help": "Show help information",
+    "tokens": "Show token usage for current session",
+    "quit": "Exit the CLI",
+    "exit": "Exit the CLI",
 }
 
 # Common bash commands for autocomplete
 COMMON_BASH_COMMANDS = {
-    'ls': 'List directory contents',
-    'ls -la': 'List all files with details',
-    'cd': 'Change directory',
-    'pwd': 'Print working directory',
-    'cat': 'Display file contents',
-    'grep': 'Search text patterns',
-    'find': 'Find files',
-    'mkdir': 'Make directory',
-    'rm': 'Remove file',
-    'cp': 'Copy file',
-    'mv': 'Move/rename file',
-    'echo': 'Print text',
-    'touch': 'Create empty file',
-    'head': 'Show first lines',
-    'tail': 'Show last lines',
-    'wc': 'Count lines/words',
-    'chmod': 'Change permissions',
+    "ls": "List directory contents",
+    "ls -la": "List all files with details",
+    "cd": "Change directory",
+    "pwd": "Print working directory",
+    "cat": "Display file contents",
+    "grep": "Search text patterns",
+    "find": "Find files",
+    "mkdir": "Make directory",
+    "rm": "Remove file",
+    "cp": "Copy file",
+    "mv": "Move/rename file",
+    "echo": "Print text",
+    "touch": "Create empty file",
+    "head": "Show first lines",
+    "tail": "Show last lines",
+    "wc": "Count lines/words",
+    "chmod": "Change permissions",
 }
 
 # Maximum argument length for display
@@ -77,6 +78,7 @@ console = Console(highlight=False)
 
 class SessionState:
     """Holds mutable session state (auto-approve mode, etc)."""
+
     def __init__(self, auto_approve: bool = False):
         self.auto_approve = auto_approve
 
@@ -110,26 +112,27 @@ def create_model():
 
     if openai_key:
         from langchain_openai import ChatOpenAI
+
         model_name = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
         console.print(f"[dim]Using OpenAI model: {model_name}[/dim]")
         return ChatOpenAI(
             model=model_name,
             temperature=0.7,
         )
-    elif anthropic_key:
+    if anthropic_key:
         from langchain_anthropic import ChatAnthropic
+
         model_name = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
         console.print(f"[dim]Using Anthropic model: {model_name}[/dim]")
         return ChatAnthropic(
             model_name=model_name,
             max_tokens=20000,
         )
-    else:
-        console.print("[bold red]Error:[/bold red] No API key configured.")
-        console.print("\nPlease set one of the following environment variables:")
-        console.print("  - OPENAI_API_KEY     (for OpenAI models like gpt-5-mini)")
-        console.print("  - ANTHROPIC_API_KEY  (for Claude models)")
-        console.print("\nExample:")
-        console.print("  export OPENAI_API_KEY=your_api_key_here")
-        console.print("\nOr add it to your .env file.")
-        sys.exit(1)
+    console.print("[bold red]Error:[/bold red] No API key configured.")
+    console.print("\nPlease set one of the following environment variables:")
+    console.print("  - OPENAI_API_KEY     (for OpenAI models like gpt-5-mini)")
+    console.print("  - ANTHROPIC_API_KEY  (for Claude models)")
+    console.print("\nExample:")
+    console.print("  export OPENAI_API_KEY=your_api_key_here")
+    console.print("\nOr add it to your .env file.")
+    sys.exit(1)

@@ -1,17 +1,18 @@
 """Agent management and creation for the CLI."""
+
 import os
 import shutil
 from pathlib import Path
 
 from deepagents import create_deep_agent
-from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.backends import CompositeBackend
+from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.middleware.agent_memory import AgentMemoryMiddleware
 from deepagents.middleware.resumable_shell import ResumableShellToolMiddleware
 from langchain.agents.middleware import HostExecutionPolicy
 from langgraph.checkpoint.memory import InMemorySaver
 
-from .config import console, COLORS, config, get_default_coding_instructions
+from .config import COLORS, config, console, get_default_coding_instructions
 
 
 def list_agents():
@@ -20,10 +21,13 @@ def list_agents():
 
     if not agents_dir.exists() or not any(agents_dir.iterdir()):
         console.print("[yellow]No agents found.[/yellow]")
-        console.print(f"[dim]Agents will be created in ~/.deepagents/ when you first use them.[/dim]", style=COLORS["dim"])
+        console.print(
+            "[dim]Agents will be created in ~/.deepagents/ when you first use them.[/dim]",
+            style=COLORS["dim"],
+        )
         return
 
-    console.print(f"\n[bold]Available Agents:[/bold]\n", style=COLORS["primary"])
+    console.print("\n[bold]Available Agents:[/bold]\n", style=COLORS["primary"])
 
     for agent_path in sorted(agents_dir.iterdir()):
         if agent_path.is_dir():
@@ -34,7 +38,9 @@ def list_agents():
                 console.print(f"  • [bold]{agent_name}[/bold]", style=COLORS["primary"])
                 console.print(f"    {agent_path}", style=COLORS["dim"])
             else:
-                console.print(f"  • [bold]{agent_name}[/bold] [dim](incomplete)[/dim]", style=COLORS["tool"])
+                console.print(
+                    f"  • [bold]{agent_name}[/bold] [dim](incomplete)[/dim]", style=COLORS["tool"]
+                )
                 console.print(f"    {agent_path}", style=COLORS["dim"])
 
     console.print()
@@ -50,7 +56,9 @@ def reset_agent(agent_name: str, source_agent: str = None):
         source_md = source_dir / "agent.md"
 
         if not source_md.exists():
-            console.print(f"[bold red]Error:[/bold red] Source agent '{source_agent}' not found or has no agent.md")
+            console.print(
+                f"[bold red]Error:[/bold red] Source agent '{source_agent}' not found or has no agent.md"
+            )
             return
 
         source_content = source_md.read_text()
@@ -74,8 +82,7 @@ def reset_agent(agent_name: str, source_agent: str = None):
 def create_agent_with_config(model, assistant_id: str, tools: list):
     """Create and configure an agent with the specified model and tools."""
     shell_middleware = ResumableShellToolMiddleware(
-        workspace_root=os.getcwd(),
-        execution_policy=HostExecutionPolicy()
+        workspace_root=os.getcwd(), execution_policy=HostExecutionPolicy()
     )
 
     # For long-term memory, point to ~/.deepagents/AGENT_NAME/ with /memories/ prefix
@@ -92,12 +99,14 @@ def create_agent_with_config(model, assistant_id: str, tools: list):
 
     # Composite backend: current working directory for default, agent directory for /memories/
     backend = CompositeBackend(
-        default=FilesystemBackend(),
-        routes={"/memories/": long_term_backend}
+        default=FilesystemBackend(), routes={"/memories/": long_term_backend}
     )
 
     # Use the same backend for agent memory middleware
-    agent_middleware = [AgentMemoryMiddleware(backend=long_term_backend, memory_path="/memories/"), shell_middleware]
+    agent_middleware = [
+        AgentMemoryMiddleware(backend=long_term_backend, memory_path="/memories/"),
+        shell_middleware,
+    ]
     system_prompt = f"""### Current Working Directory
 
 The filesystem backend is currently operating in: `{Path.cwd()}`
@@ -153,27 +162,23 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
     # Helper functions for formatting tool descriptions in HITL prompts
     def format_write_file_description(tool_call: dict) -> str:
         """Format write_file tool call for approval prompt."""
-        args = tool_call.get('args', {})
-        file_path = args.get('file_path', 'unknown')
-        content = args.get('content', '')
+        args = tool_call.get("args", {})
+        file_path = args.get("file_path", "unknown")
+        content = args.get("content", "")
 
         action = "Overwrite" if os.path.exists(file_path) else "Create"
         line_count = len(content.splitlines())
         size = len(content.encode("utf-8"))
 
-        return (
-            f"File: {file_path}\n"
-            f"Action: {action} file\n"
-            f"Lines: {line_count} · Bytes: {size}"
-        )
+        return f"File: {file_path}\nAction: {action} file\nLines: {line_count} · Bytes: {size}"
 
     def format_edit_file_description(tool_call: dict) -> str:
         """Format edit_file tool call for approval prompt."""
-        args = tool_call.get('args', {})
-        file_path = args.get('file_path', 'unknown')
-        old_string = args.get('old_string', '')
-        new_string = args.get('new_string', '')
-        replace_all = bool(args.get('replace_all', False))
+        args = tool_call.get("args", {})
+        file_path = args.get("file_path", "unknown")
+        old_string = args.get("old_string", "")
+        new_string = args.get("new_string", "")
+        replace_all = bool(args.get("replace_all", False))
 
         delta = len(new_string) - len(old_string)
 
@@ -185,21 +190,17 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
 
     def format_web_search_description(tool_call: dict) -> str:
         """Format web_search tool call for approval prompt."""
-        args = tool_call.get('args', {})
-        query = args.get('query', 'unknown')
-        max_results = args.get('max_results', 5)
+        args = tool_call.get("args", {})
+        query = args.get("query", "unknown")
+        max_results = args.get("max_results", 5)
 
-        return (
-            f"Query: {query}\n"
-            f"Max results: {max_results}\n\n"
-            f"⚠️  This will use Tavily API credits"
-        )
+        return f"Query: {query}\nMax results: {max_results}\n\n⚠️  This will use Tavily API credits"
 
     def format_task_description(tool_call: dict) -> str:
         """Format task (subagent) tool call for approval prompt."""
-        args = tool_call.get('args', {})
-        description = args.get('description', 'unknown')
-        prompt = args.get('prompt', '')
+        args = tool_call.get("args", {})
+        description = args.get("description", "unknown")
+        prompt = args.get("prompt", "")
 
         # Truncate prompt if too long
         prompt_preview = prompt[:300]
@@ -223,27 +224,27 @@ The todo list is a planning tool - use it judiciously to avoid overwhelming the 
         "description": lambda tool_call, state, runtime: (
             f"Shell Command: {tool_call['args'].get('command', 'N/A')}\n"
             f"Working Directory: {os.getcwd()}"
-        )
+        ),
     }
 
     write_file_interrupt_config: InterruptOnConfig = {
         "allowed_decisions": ["approve", "reject"],
-        "description": lambda tool_call, state, runtime: format_write_file_description(tool_call)
+        "description": lambda tool_call, state, runtime: format_write_file_description(tool_call),
     }
 
     edit_file_interrupt_config: InterruptOnConfig = {
         "allowed_decisions": ["approve", "reject"],
-        "description": lambda tool_call, state, runtime: format_edit_file_description(tool_call)
+        "description": lambda tool_call, state, runtime: format_edit_file_description(tool_call),
     }
 
     web_search_interrupt_config: InterruptOnConfig = {
         "allowed_decisions": ["approve", "reject"],
-        "description": lambda tool_call, state, runtime: format_web_search_description(tool_call)
+        "description": lambda tool_call, state, runtime: format_web_search_description(tool_call),
     }
 
     task_interrupt_config: InterruptOnConfig = {
         "allowed_decisions": ["approve", "reject"],
-        "description": lambda tool_call, state, runtime: format_task_description(tool_call)
+        "description": lambda tool_call, state, runtime: format_task_description(tool_call),
     }
 
     agent = create_deep_agent(

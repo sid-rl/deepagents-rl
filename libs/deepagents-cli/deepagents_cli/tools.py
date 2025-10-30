@@ -1,24 +1,28 @@
 """Custom tools for the CLI agent."""
+
 import os
-from typing import Dict, Any, Union, Literal
+from typing import Any, Literal
 
 import requests
 from tavily import TavilyClient
 
 # Initialize Tavily client if API key is available
-tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY")) if os.environ.get("TAVILY_API_KEY") else None
+tavily_client = (
+    TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+    if os.environ.get("TAVILY_API_KEY")
+    else None
+)
 
 
 def http_request(
     url: str,
     method: str = "GET",
-    headers: Dict[str, str] = None,
-    data: Union[str, Dict] = None,
-    params: Dict[str, str] = None,
+    headers: dict[str, str] = None,
+    data: str | dict = None,
+    params: dict[str, str] = None,
     timeout: int = 30,
-) -> Dict[str, Any]:
-    """
-    Make HTTP requests to APIs and web services.
+) -> dict[str, Any]:
+    """Make HTTP requests to APIs and web services.
 
     Args:
         url: Target URL
@@ -72,7 +76,7 @@ def http_request(
             "success": False,
             "status_code": 0,
             "headers": {},
-            "content": f"Request error: {str(e)}",
+            "content": f"Request error: {e!s}",
             "url": url,
         }
     except Exception as e:
@@ -80,7 +84,7 @@ def http_request(
             "success": False,
             "status_code": 0,
             "headers": {},
-            "content": f"Error making request: {str(e)}",
+            "content": f"Error making request: {e!s}",
             "url": url,
         }
 
@@ -121,7 +125,7 @@ def web_search(
     if tavily_client is None:
         return {
             "error": "Tavily API key not configured. Please set TAVILY_API_KEY environment variable.",
-            "query": query
+            "query": query,
         }
 
     try:
@@ -133,7 +137,4 @@ def web_search(
         )
         return search_docs
     except Exception as e:
-        return {
-            "error": f"Web search error: {str(e)}",
-            "query": query
-        }
+        return {"error": f"Web search error: {e!s}", "query": query}
