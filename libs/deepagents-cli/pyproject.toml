@@ -23,12 +23,16 @@ deepagents-cli = "deepagents_cli:cli_main"
 deepagents = { workspace = true }
 
 [project.optional-dependencies]
+
 dev = [
     "pytest",
     "pytest-cov",
     "build",
     "twine",
     "langchain-openai",
+    "pytest-timeout>=2.4.0",
+    "pytest-socket>=0.7.0",
+    "pytest-asyncio>=1.2.0",
 ]
 
 [dependency-groups]
